@@ -199,12 +199,42 @@ void Stack::updateButtonsPosition()
     d->buttonsWidget->setFixedHeight(buttonsHeight);
     d->buttonsWidget->move(width() - buttonsWidth - 2, 0);
     d->buttonsWidget->raise();
+    
+    // Limit tab bar width to prevent tabs from overlapping buttons
+    const int margin = 4; // Margin between tabs and buttons
+    int maxTabBarWidth = width() - buttonsWidth - margin;
+    if (maxTabBarWidth > 0) {
+        tb->setMaximumWidth(maxTabBarWidth);
+        // Ensure current geometry respects the limit
+        QRect geom = tb->geometry();
+        if (geom.width() > maxTabBarWidth) {
+            geom.setWidth(maxTabBarWidth);
+            tb->setGeometry(geom);
+        }
+    }
 }
 
 void Stack::resizeEvent(QResizeEvent *event)
 {
     QTabWidget::resizeEvent(event);
     updateButtonsPosition();
+    // Ensure tab bar respects width limit after resize
+    if (d->buttonsWidget) {
+        QTabBar *tb = tabBar();
+        if (tb) {
+            int buttonsWidth = d->buttonsWidget->width();
+            const int margin = 4;
+            int maxTabBarWidth = width() - buttonsWidth - margin;
+            if (maxTabBarWidth > 0) {
+                tb->setMaximumWidth(maxTabBarWidth);
+                QRect geom = tb->geometry();
+                if (geom.width() > maxTabBarWidth) {
+                    geom.setWidth(maxTabBarWidth);
+                    tb->setGeometry(geom);
+                }
+            }
+        }
+    }
 }
 
 void Stack::showContextMenu(QPoint pos)
