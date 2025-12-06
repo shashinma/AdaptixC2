@@ -247,13 +247,21 @@ void Stack::showContextMenu(QPoint pos)
     if (tabBar->count() <= 1)
         return;
 
+    // Convert pos to tabBar coordinates for tabAt() check
+    QPoint tabBarPos = tabBar->mapFrom(this, pos);
+    
     // Click on a tab => No menu
-    if (tabBar->tabAt(pos) >= 0)
+    if (tabBar->tabAt(tabBarPos) >= 0)
         return;
 
     // Right click is allowed only on the tabs area
-    QRect tabAreaRect = tabBar->rect();
-    tabAreaRect.setWidth(this->width());
+    // Create a rectangle covering the tab bar area, expanded to full width of the widget
+    // This rectangle is in widget coordinates (same as pos)
+    QRect tabAreaRect = QRect(tabBar->mapTo(this, QPoint(0, 0)), tabBar->size());
+    if (tabPosition() == QTabWidget::North || tabPosition() == QTabWidget::South) {
+        tabAreaRect.setLeft(0);
+        tabAreaRect.setRight(width());
+    }
     if (!tabAreaRect.contains(pos))
         return;
 
