@@ -127,6 +127,9 @@ void Stack::setupTabBarButtons()
     if (!(Config::self().flags() & Config::Flag_ShowButtonsOnTabBarIfTitleBarHidden))
         return;
 
+    if (d->buttonsWidget != nullptr)
+        return;
+
     auto factory = static_cast<ViewFactory *>(Config::self().viewFactory());
     d->closeButton = factory->createTitleBarButton(this, TitleBarButtonType::Close);
     d->floatButton = factory->createTitleBarButton(this, TitleBarButtonType::Float);
