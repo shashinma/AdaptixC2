@@ -6,15 +6,20 @@
 #include <UI/Graph/GraphScene.h>
 #include <UI/Widgets/AdaptixWidget.h>
 #include <Client/AuthProfile.h>
+#include <QSettings>
 
 SessionsGraph::SessionsGraph(QWidget* parent) : QGraphicsView(parent)
 {
     this->mainWidget = parent;
 
     QString project = static_cast<AdaptixWidget *>(parent)->GetProfile()->GetProject();
+    QString uniqueName = "Sessions Graph:Dock-" + project;
 
-    dockWidget = new KDDockWidgets::QtWidgets::DockWidget("Sessions Graph:Dock-" + project, KDDockWidgets::DockWidgetOption_None, KDDockWidgets::LayoutSaverOption::None);
-    dockWidget->setTitle("Sessions Graph");
+    QSettings settings("Adaptix", "AdaptixClient");
+    QString title = settings.value("TabNames/" + uniqueName, "Sessions Graph").toString();
+
+    dockWidget = new KDDockWidgets::QtWidgets::DockWidget(uniqueName, KDDockWidgets::DockWidgetOption_None, KDDockWidgets::LayoutSaverOption::None);
+    dockWidget->setTitle(title);
     dockWidget->setWidget(this);
     dockWidget->setIcon(QIcon( ":/icons/graph" ), KDDockWidgets::IconPlace::TabBar);
 

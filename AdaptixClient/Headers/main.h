@@ -204,6 +204,8 @@ typedef struct SettingsData {
 
     bool TabBlinkEnabled;
     QMap<QString, bool> BlinkWidgets;  // className -> enabled
+
+    QMap<QString, QString> TabCustomNames;  // uniqueName -> customTitle
 } SettingsData;
 
 typedef struct AxUI

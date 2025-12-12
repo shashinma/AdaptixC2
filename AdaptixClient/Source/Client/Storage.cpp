@@ -415,3 +415,37 @@ void Storage::UpdateSettingsTabBlink(const SettingsData &settingsData)
     if (!query.exec())
         LogError("SettingsTablBlink not updated in database: %s\n", query.lastError().text().toStdString().c_str());
 }
+
+
+
+void Storage::SelectSettingsTabNames(SettingsData* settingsData)
+{
+    QSqlQuery query;
+    query.prepare("SELECT data FROM Settings WHERE key = 'SettingsTabNames' LIMIT 1;");
+    if (query.exec() && query.next()) {
+        QString       data = query.value("data").toString();
+        QJsonDocument doc  = QJsonDocument::fromJson(data.toUtf8());
+        QJsonObject   json = doc.object();
+
+        QJsonObject names = json["TabCustomNames"].toObject();
+        for (auto it = names.begin(); it != names.end(); ++it)
+            settingsData->TabCustomNames[it.key()] = it.value().toString();
+    }
+}
+
+void Storage::UpdateSettingsTabNames(const SettingsData &settingsData)
+{
+    QJsonObject names;
+    for (auto it = settingsData.TabCustomNames.begin(); it != settingsData.TabCustomNames.end(); ++it)
+        names[it.key()] = it.value();
+
+    QJsonObject json;
+    json["TabCustomNames"] = names;
+    QString data = QJsonDocument(json).toJson(QJsonDocument::Compact);
+
+    QSqlQuery query;
+    query.prepare("INSERT OR REPLACE INTO Settings (key, data) VALUES ('SettingsTabNames', :Data);");
+    query.bindValue(":Data", data);
+    if (!query.exec())
+        LogError("SettingsTabNames not updated in database: %s\n", query.lastError().text().toStdString().c_str());
+}

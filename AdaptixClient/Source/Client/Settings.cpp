@@ -60,6 +60,7 @@ void Settings::LoadFromDB()
     mainAdaptix->storage->SelectSettingsGraph( &data );
     mainAdaptix->storage->SelectSettingsTasks( &data );
     mainAdaptix->storage->SelectSettingsTabBlink( &data );
+    mainAdaptix->storage->SelectSettingsTabNames( &data );
 }
 
 void Settings::SaveToDB() const
@@ -70,4 +71,5 @@ void Settings::SaveToDB() const
     mainAdaptix->storage->UpdateSettingsGraph( data );
     mainAdaptix->storage->UpdateSettingsTasks( data );
     mainAdaptix->storage->UpdateSettingsTabBlink( data );
+    mainAdaptix->storage->UpdateSettingsTabNames( data );
 }

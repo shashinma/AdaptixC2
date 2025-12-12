@@ -49,6 +49,9 @@ public:
 
     static void SelectSettingsTabBlink(SettingsData* settingsData);
     static void UpdateSettingsTabBlink(const SettingsData &settingsData);
+
+    static void SelectSettingsTabNames(SettingsData* settingsData);
+    static void UpdateSettingsTabNames(const SettingsData &settingsData);
 };
 
 #endif

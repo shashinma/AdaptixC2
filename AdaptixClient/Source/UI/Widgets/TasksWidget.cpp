@@ -7,6 +7,7 @@
 #include <Client/AxScript/AxScriptManager.h>
 #include <Utils/FontManager.h>
 #include <MainAdaptix.h>
+#include <QSettings>
 
 
 TaskOutputWidget::TaskOutputWidget() { this->createUI(); }
@@ -59,13 +60,20 @@ TasksWidget::TasksWidget( AdaptixWidget* w )
 
     taskOutputConsole = new TaskOutputWidget();
 
-    dockWidgetTable = new KDDockWidgets::QtWidgets::DockWidget( + "Tasks:Dock-" + w->GetProfile()->GetProject(), KDDockWidgets::DockWidgetOption_None, KDDockWidgets::LayoutSaverOption::None);
-    dockWidgetTable->setTitle("Tasks");
+    QString uniqueNameTable = "Tasks:Dock-" + w->GetProfile()->GetProject();
+    QString uniqueNameOutput = "Task Output:Dock-" + w->GetProfile()->GetProject();
+
+    QSettings settings("Adaptix", "AdaptixClient");
+    QString titleTable = settings.value("TabNames/" + uniqueNameTable, "Tasks").toString();
+    QString titleOutput = settings.value("TabNames/" + uniqueNameOutput, "Task Output").toString();
+
+    dockWidgetTable = new KDDockWidgets::QtWidgets::DockWidget(uniqueNameTable, KDDockWidgets::DockWidgetOption_None, KDDockWidgets::LayoutSaverOption::None);
+    dockWidgetTable->setTitle(titleTable);
     dockWidgetTable->setWidget(this);
     dockWidgetTable->setIcon(QIcon( ":/icons/job" ), KDDockWidgets::IconPlace::TabBar);
 
-    dockWidgetOutput = new KDDockWidgets::QtWidgets::DockWidget( + "Task Output:Dock-" + w->GetProfile()->GetProject(), KDDockWidgets::DockWidgetOption_None, KDDockWidgets::LayoutSaverOption::None);
-    dockWidgetOutput->setTitle("Task Output");
+    dockWidgetOutput = new KDDockWidgets::QtWidgets::DockWidget(uniqueNameOutput, KDDockWidgets::DockWidgetOption_None, KDDockWidgets::LayoutSaverOption::None);
+    dockWidgetOutput->setTitle(titleOutput);
     dockWidgetOutput->setWidget(taskOutputConsole);
     dockWidgetOutput->setIcon(QIcon( ":/icons/job" ), KDDockWidgets::IconPlace::TabBar);
 

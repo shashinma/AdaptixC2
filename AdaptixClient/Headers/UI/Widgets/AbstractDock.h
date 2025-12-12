@@ -20,6 +20,7 @@
 #include <QTimer>
 #include <QScrollBar>
 #include <QSet>
+#include <QSettings>
 #include <MainAdaptix.h>
 #include <Client/Settings.h>
 #include <typeinfo>
@@ -86,8 +87,16 @@ protected:
 
 public:
     DockTab(const QString &tabName, const QString &projectName, const QString &icon = "") {
-        dockWidget = new KDDockWidgets::QtWidgets::DockWidget(tabName + ":Dock-" + projectName, KDDockWidgets::DockWidgetOption_None, KDDockWidgets::LayoutSaverOption::None);
-        dockWidget->setTitle(tabName);
+        QString uniqueName = tabName + ":Dock-" + projectName;
+        dockWidget = new KDDockWidgets::QtWidgets::DockWidget(uniqueName, KDDockWidgets::DockWidgetOption_None, KDDockWidgets::LayoutSaverOption::None);
+
+        QString displayTitle = tabName;
+        QSettings settings("Adaptix", "AdaptixClient");
+        QString customTitle = settings.value("TabNames/" + uniqueName).toString();
+        if (!customTitle.isEmpty())
+            displayTitle = customTitle;
+
+        dockWidget->setTitle(displayTitle);
         if (!icon.isEmpty())
             dockWidget->setIcon(QIcon(icon), KDDockWidgets::IconPlace::TabBar);
 
