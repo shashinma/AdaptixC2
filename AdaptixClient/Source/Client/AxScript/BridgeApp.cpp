@@ -1028,6 +1028,43 @@ void BridgeApp::open_embedded_browser(const QString &url, const QString &proxyHo
 #endif
 }
 
+void BridgeApp::open_web_panel(bool chromeless, const QString& panelId, const QString& title, const QString& url,
+                               const QString& proxyHost, int proxyPort, const QString& icon)
+{
+#ifdef HAS_QT_WEBENGINE
+    AdaptixWidget* ax = scriptEngine->manager()->GetAdaptix();
+    if (!ax)
+        return;
+    if (!chromeless) {
+        ax->LoadBrowserUI(url, proxyHost, static_cast<quint16>(proxyPort));
+        return;
+    }
+    if (panelId.trimmed().isEmpty()) {
+        log_error(QStringLiteral("open_web_panel: chromeless mode requires a non-empty panelId"));
+        return;
+    }
+    ax->LoadChromelessWebPanel(panelId.trimmed(), title, url, proxyHost, static_cast<quint16>(proxyPort), icon);
+#else
+    Q_UNUSED(chromeless);
+    Q_UNUSED(panelId);
+    Q_UNUSED(title);
+    Q_UNUSED(url);
+    Q_UNUSED(proxyHost);
+    Q_UNUSED(proxyPort);
+    Q_UNUSED(icon);
+#endif
+}
+
+void BridgeApp::apply_chromeless_web_modules(const QString& jsonPayload)
+{
+#ifdef HAS_QT_WEBENGINE
+    if (AdaptixWidget* ax = scriptEngine->manager()->GetAdaptix())
+        ax->applyChromelessWebModulesJson(jsonPayload);
+#else
+    Q_UNUSED(jsonPayload);
+#endif
+}
+
 bool BridgeApp::prompt_confirm(const QString &title, const QString &text)
 {
     QMessageBox::StandardButton reply = QMessageBox::question(nullptr, title, text, QMessageBox::Yes | QMessageBox::No, QMessageBox::No);

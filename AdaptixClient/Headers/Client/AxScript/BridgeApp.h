@@ -78,6 +78,9 @@ public Q_SLOTS:
     void     open_remote_terminal(const QString &id);
     void     open_remote_shell(const QString &id);
     void     open_embedded_browser(const QString &url = QString(), const QString &proxyHost = QString(), int proxyPort = 0);
+    void     open_web_panel(bool chromeless, const QString& panelId, const QString& title, const QString& url = QString(),
+                            const QString& proxyHost = QString(), int proxyPort = 0, const QString& icon = QString());
+    void     apply_chromeless_web_modules(const QString& jsonPayload);
     bool     prompt_confirm(const QString &title, const QString &text);
     QString  prompt_open_file(const QString &caption = "Select file", const QString &filter = QString());
     QString  prompt_open_dir(const QString &caption = "Select directory");
