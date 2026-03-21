@@ -2,6 +2,7 @@
 #include <QPointer>
 #include <QElapsedTimer>
 #include <QTimer>
+#include <QNetworkProxy>
 #include <Agent/Agent.h>
 #include <Workers/LastTickWorker.h>
 #include <Workers/WebSocketWorker.h>
@@ -21,6 +22,9 @@
 #include <UI/Widgets/TargetsWidget.h>
 #include <UI/Widgets/TasksWidget.h>
 #include <UI/Widgets/TunnelsWidget.h>
+#ifdef HAS_QT_WEBENGINE
+#include <UI/Widgets/EmbeddableBrowserWidget.h>
+#endif
 #include <UI/Graph/SessionsGraph.h>
 #include <UI/Dialogs/DialogSyncPacket.h>
 #include <UI/Dialogs/DialogTunnel.h>
@@ -86,6 +90,9 @@ AdaptixWidget::AdaptixWidget(AuthProfile* authProfile, QThread* channelThread, W
     connect( screensButton,   &QPushButton::clicked, this, &AdaptixWidget::LoadScreenshotsUI);
     connect( credsButton,     &QPushButton::clicked, this, &AdaptixWidget::LoadCredentialsUI);
     connect( targetsButton,   &QPushButton::clicked, this, &AdaptixWidget::LoadTargetsUI);
+#ifdef HAS_QT_WEBENGINE
+    connect( browserButton,  &QPushButton::clicked, this, [this]() { LoadBrowserUI(); });
+#endif
     connect( reconnectButton, &QPushButton::clicked, this, &AdaptixWidget::OnReconnect);
 
     connect( TickThread, &QThread::started, TickWorker, &LastTickWorker::run );
@@ -329,6 +336,13 @@ void AdaptixWidget::createUI()
     keysButton->setFixedSize(37, 28);
     keysButton->setToolTip("Keystrokes");
 
+#ifdef HAS_QT_WEBENGINE
+    browserButton = new QPushButton( QIcon(":/icons/globe_64dp"), "", this );
+    browserButton->setIconSize( QSize( 24,24 ));
+    browserButton->setFixedSize(37, 28);
+    browserButton->setToolTip("Embedded Browser");
+#endif
+
     line_4 = new QFrame(this);
     line_4->setFrameShape(QFrame::VLine);
     line_4->setMinimumHeight(25);
@@ -390,6 +404,9 @@ void AdaptixWidget::createUI()
     topHLayout->addWidget(credsButton);
     topHLayout->addWidget(screensButton);
     topHLayout->addWidget(keysButton);
+#ifdef HAS_QT_WEBENGINE
+    topHLayout->addWidget(browserButton);
+#endif
     topHLayout->addWidget(line_4);
     topHLayout->addWidget(reconnectButton);
     // topHLayout->addWidget(line_5);
@@ -1151,6 +1168,24 @@ void AdaptixWidget::LoadHvncUI(const QString &AgentId)
     Q_UNUSED(AgentId);
     // TODO: implement HVNC UI
 }
+
+#ifdef HAS_QT_WEBENGINE
+void AdaptixWidget::LoadBrowserUI(const QString &url, const QString &proxyHost, quint16 proxyPort)
+{
+    if (!BrowserDock) {
+        BrowserDock = new EmbeddableBrowserWidget(this, "Browser", url);
+        if (!proxyHost.isEmpty() && proxyPort > 0) {
+            BrowserDock->setProxy(QNetworkProxy::Socks5Proxy, proxyHost, proxyPort);
+        }
+    } else if (!url.isEmpty()) {
+        BrowserDock->loadUrl(url);
+        if (!proxyHost.isEmpty() && proxyPort > 0) {
+            BrowserDock->setProxy(QNetworkProxy::Socks5Proxy, proxyHost, proxyPort);
+        }
+    }
+    PlaceDock(dockBottom, BrowserDock->dock());
+}
+#endif
 
 void AdaptixWidget::ShowTunnelCreator(const QString &AgentId, const bool socks4, const bool socks5, const bool lportfwd, const bool rportfwd)
 {

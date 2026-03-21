@@ -33,6 +33,9 @@ class CredentialsWidget;
 class TargetsWidget;
 class TasksWidget;
 class TunnelsWidget;
+#ifdef HAS_QT_WEBENGINE
+class EmbeddableBrowserWidget;
+#endif
 class TunnelEndpoint;
 class DialogSyncPacket;
 class AuthProfile;
@@ -81,6 +84,9 @@ Q_OBJECT
     QPushButton*    credsButton       = nullptr;
     QPushButton*    screensButton     = nullptr;
     QPushButton*    keysButton        = nullptr;
+#ifdef HAS_QT_WEBENGINE
+    QPushButton*    browserButton     = nullptr;
+#endif
     QPushButton*    reconnectButton   = nullptr;
     oclero::qlementine::PopoverButton* extDocksButton = nullptr;
     QSpacerItem*    horizontalSpacer1 = nullptr;
@@ -142,6 +148,9 @@ public:
     CredentialsWidget*   CredentialsDock   = nullptr;
     TasksWidget*         TasksDock         = nullptr;
     TargetsWidget*       TargetsDock       = nullptr;
+#ifdef HAS_QT_WEBENGINE
+    EmbeddableBrowserWidget* BrowserDock   = nullptr;
+#endif
 
     QVector<RegListenerConfig>       RegisterListeners;
     QVector<RegAgentConfig>          RegisterAgents;
@@ -223,6 +232,9 @@ public:
     void LoadShellUI(const QString &AgentId);
     void LoadVncUI(const QString &AgentId);
     void LoadHvncUI(const QString &AgentId);
+#ifdef HAS_QT_WEBENGINE
+    void LoadBrowserUI(const QString &url = QString(), const QString &proxyHost = QString(), quint16 proxyPort = 0);
+#endif
     void ShowTunnelCreator(const QString &AgentId, bool socks4, bool socks5, bool lportfwd, bool rportfwd);
 
 Q_SIGNALS:
