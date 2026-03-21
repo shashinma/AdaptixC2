@@ -508,6 +508,13 @@ void Popover::adjustSizeToContent() {
   adjustSize();
 }
 
+void Popover::relayoutToContent() {
+  if (!_opened || !isVisible())
+    return;
+  updatePopoverGeometry();
+  updateFrameMask();
+}
+
 void Popover::paintEvent(QPaintEvent*) {
   QPainter p(this);
   p.setRenderHint(QPainter::Antialiasing, true);

@@ -148,6 +148,8 @@ public:
   void setContentMaskEnabled(bool);
   Q_SIGNAL void contentMaskEnabledChanged();
 
+  void relayoutToContent();
+
 public Q_SLOTS:
   void openPopover();
   void closePopover();
