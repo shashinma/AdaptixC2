@@ -33,6 +33,8 @@ find_package(Qt6
         Sql
         Qml
 )
+find_package(Qt6 COMPONENTS WebEngineWidgets QUIET)
+set(HAS_WEBENGINE ${Qt6WebEngineWidgets_FOUND})
 
 include_directories(
         Headers
@@ -258,6 +260,15 @@ add_executable(AdaptixClient
         Source/Utils/FontManager.cpp
         Source/Utils/TitleBarStyle.cpp
 )
+
+if(HAS_WEBENGINE)
+    target_sources(AdaptixClient PRIVATE
+        Headers/UI/Widgets/EmbeddableBrowserWidget.h
+        Source/UI/Widgets/EmbeddableBrowserWidget.cpp
+    )
+    target_link_libraries(AdaptixClient PRIVATE Qt6::WebEngineWidgets)
+    target_compile_definitions(AdaptixClient PRIVATE HAS_QT_WEBENGINE=1)
+endif()
 
 target_compile_definitions(
         AdaptixClient
