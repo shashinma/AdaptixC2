@@ -1017,6 +1017,17 @@ void BridgeApp::open_remote_terminal(const QString &id) { scriptEngine->manager(
 
 void BridgeApp::open_remote_shell(const QString &id) { scriptEngine->manager()->GetAdaptix()->LoadShellUI(id); }
 
+void BridgeApp::open_embedded_browser(const QString &url, const QString &proxyHost, int proxyPort)
+{
+#ifdef HAS_QT_WEBENGINE
+    scriptEngine->manager()->GetAdaptix()->LoadBrowserUI(url, proxyHost, static_cast<quint16>(proxyPort));
+#else
+    Q_UNUSED(url);
+    Q_UNUSED(proxyHost);
+    Q_UNUSED(proxyPort);
+#endif
+}
+
 bool BridgeApp::prompt_confirm(const QString &title, const QString &text)
 {
     QMessageBox::StandardButton reply = QMessageBox::question(nullptr, title, text, QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
