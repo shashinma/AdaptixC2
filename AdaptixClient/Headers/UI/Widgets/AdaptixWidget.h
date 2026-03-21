@@ -183,6 +183,12 @@ public:
     };
     QMap<QString, ExtDockEntry> extDocksMap;
 
+#ifdef HAS_QT_WEBENGINE
+    QMap<QString, EmbeddableBrowserWidget*> chromelessWebPanels;
+    QString chromelessExtDockId(const QString& logicalId) const;
+    void clearChromelessWebPanels();
+#endif
+
     explicit AdaptixWidget(AuthProfile* authProfile, QThread* channelThread, WebSocketWorker* channelWsWorker);
     ~AdaptixWidget() override;
 
@@ -234,6 +240,10 @@ public:
     void LoadHvncUI(const QString &AgentId);
 #ifdef HAS_QT_WEBENGINE
     void LoadBrowserUI(const QString &url = QString(), const QString &proxyHost = QString(), quint16 proxyPort = 0);
+    void LoadChromelessWebPanel(const QString& panelId, const QString& title, const QString& url = QString(),
+                                const QString& proxyHost = QString(), quint16 proxyPort = 0, const QString& icon = QString());
+    void CloseChromelessWebPanel(const QString& panelId);
+    void applyChromelessWebModulesJson(const QString& jsonPayload);
 #endif
     void ShowTunnelCreator(const QString &AgentId, bool socks4, bool socks5, bool lportfwd, bool rportfwd);
 

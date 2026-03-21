@@ -2,7 +2,10 @@
 #include <QPointer>
 #include <QElapsedTimer>
 #include <QTimer>
+#include <QJsonParseError>
 #include <QNetworkProxy>
+#include <QSet>
+#include <QUrl>
 #include <Agent/Agent.h>
 #include <Workers/LastTickWorker.h>
 #include <Workers/WebSocketWorker.h>
@@ -575,6 +578,10 @@ void AdaptixWidget::ClearAdaptix()
     TunnelsDock->Clear();
     CredentialsDock->Clear();
     TargetsDock->Clear();
+
+#ifdef HAS_QT_WEBENGINE
+    clearChromelessWebPanels();
+#endif
 
     for (auto tunnelId : ClientTunnels.keys()) {
         auto tunnel = ClientTunnels[tunnelId];
@@ -1170,6 +1177,128 @@ void AdaptixWidget::LoadHvncUI(const QString &AgentId)
 }
 
 #ifdef HAS_QT_WEBENGINE
+QString AdaptixWidget::chromelessExtDockId(const QString& logicalId) const
+{
+    if (!profile)
+        return QStringLiteral("chromeless_%1").arg(logicalId);
+    return QStringLiteral("chromeless_%1_%2").arg(logicalId, profile->GetProject());
+}
+
+void AdaptixWidget::clearChromelessWebPanels()
+{
+    const QList<QString> keys = chromelessWebPanels.keys();
+    for (const QString& k : keys)
+        CloseChromelessWebPanel(k);
+}
+
+void AdaptixWidget::CloseChromelessWebPanel(const QString& panelId)
+{
+    const QString logicalId = panelId.trimmed();
+    if (logicalId.isEmpty() || !profile)
+        return;
+    EmbeddableBrowserWidget* dock = chromelessWebPanels.take(logicalId);
+    if (!dock)
+        return;
+    RemoveExtDock(chromelessExtDockId(logicalId));
+    dock->deleteLater();
+}
+
+void AdaptixWidget::LoadChromelessWebPanel(const QString& panelId, const QString& title, const QString& url,
+                                           const QString& proxyHost, quint16 proxyPort, const QString& icon)
+{
+    if (!profile)
+        return;
+    const QString logicalId = panelId.trimmed();
+    if (logicalId.isEmpty())
+        return;
+
+    const QString dockTitle = title.trimmed().isEmpty() ? logicalId : title.trimmed();
+    const QString extId = chromelessExtDockId(logicalId);
+
+    EmbeddableBrowserWidget* dock = chromelessWebPanels.value(logicalId, nullptr);
+    if (!dock) {
+        const auto opts = EmbeddableBrowserOptions::chromelessMode(logicalId, dockTitle, QString(), icon);
+        dock = new EmbeddableBrowserWidget(this, opts);
+        chromelessWebPanels[logicalId] = dock;
+    } else {
+        if (dock->dock())
+            dock->dock()->setTitle(dockTitle);
+    }
+
+    if (!proxyHost.isEmpty() && proxyPort > 0)
+        dock->setProxy(QNetworkProxy::Socks5Proxy, proxyHost, proxyPort);
+    else
+        dock->setProxy(QNetworkProxy::NoProxy, QString(), 0);
+
+    const QString u = url.trimmed();
+    if (!u.isEmpty())
+        dock->loadUrl(u);
+
+    RemoveExtDock(extId);
+    AddExtDock(extId, dockTitle, [dock]() {
+        if (dock && dock->dock()) {
+            dock->dock()->show();
+            dock->dock()->raise();
+        }
+    });
+    PlaceDock(dockBottom, dock->dock());
+}
+
+void AdaptixWidget::applyChromelessWebModulesJson(const QString& jsonPayload)
+{
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(jsonPayload.toUtf8(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || (!doc.isObject() && !doc.isArray()))
+        return;
+
+    QJsonArray apps;
+    if (doc.isObject()) {
+        const QJsonObject root = doc.object();
+        apps = root[QStringLiteral("apps")].toArray();
+    } else {
+        apps = doc.array();
+    }
+
+    QSet<QString> wantIds;
+    for (const QJsonValue& v : apps) {
+        if (!v.isObject())
+            continue;
+        const QString id = v.toObject()[QStringLiteral("id")].toString().trimmed();
+        if (!id.isEmpty())
+            wantIds.insert(id);
+    }
+
+    const QList<QString> existing = chromelessWebPanels.keys();
+    for (const QString& id : existing) {
+        if (!wantIds.contains(id))
+            CloseChromelessWebPanel(id);
+    }
+
+    for (const QJsonValue& v : apps) {
+        if (!v.isObject())
+            continue;
+        const QJsonObject o = v.toObject();
+        const QString id = o[QStringLiteral("id")].toString().trimmed();
+        const QString modTitle = o[QStringLiteral("title")].toString().trimmed();
+        const QString urlStr = o[QStringLiteral("url")].toString().trimmed();
+        if (id.isEmpty() || modTitle.isEmpty() || urlStr.isEmpty())
+            continue;
+
+        const QUrl pageUrl = QUrl::fromUserInput(urlStr);
+        if (!pageUrl.isValid() || pageUrl.isEmpty())
+            continue;
+
+        const QString proxyHost = o[QStringLiteral("proxy_host")].toString().trimmed();
+        const int proxyPort = o[QStringLiteral("proxy_port")].toInt();
+        const QString modIcon = o[QStringLiteral("icon")].toString().trimmed();
+
+        LoadChromelessWebPanel(id, modTitle, pageUrl.toString(),
+                               proxyHost,
+                               proxyPort > 0 ? static_cast<quint16>(proxyPort) : static_cast<quint16>(0),
+                               modIcon);
+    }
+}
+
 void AdaptixWidget::LoadBrowserUI(const QString &url, const QString &proxyHost, quint16 proxyPort)
 {
     if (!BrowserDock) {
