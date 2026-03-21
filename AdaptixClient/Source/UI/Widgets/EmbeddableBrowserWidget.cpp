@@ -273,12 +273,57 @@ static TunnelData tunnelByIdForBrowser(AdaptixWidget* w, const QString& id)
     return {};
 }
 
+EmbeddableBrowserOptions EmbeddableBrowserOptions::fullMode(const QString& title, const QString& initialUrl)
+{
+    EmbeddableBrowserOptions o;
+    o.mode = BrowserChromeMode::Full;
+    o.title = title.isEmpty() ? QStringLiteral("Browser") : title;
+    o.initialUrl = initialUrl;
+    return o;
+}
+
+EmbeddableBrowserOptions EmbeddableBrowserOptions::chromelessMode(const QString& logicalId, const QString& title,
+                                                                  const QString& initialUrl, const QString& iconPath)
+{
+    EmbeddableBrowserOptions o;
+    o.mode = BrowserChromeMode::Chromeless;
+    o.logicalId = logicalId;
+    o.title = title;
+    o.initialUrl = initialUrl;
+    o.iconPath = iconPath;
+    return o;
+}
+
 EmbeddableBrowserWidget::EmbeddableBrowserWidget(AdaptixWidget* w, const QString& title, const QString& initialUrl)
-    : DockTab(title, w->GetProfile()->GetProject(), ":/icons/globe_64dp")
+    : EmbeddableBrowserWidget(w, EmbeddableBrowserOptions::fullMode(title, initialUrl))
+{
+}
+
+EmbeddableBrowserWidget::EmbeddableBrowserWidget(AdaptixWidget* w, const EmbeddableBrowserOptions& opt)
+    : DockTab(
+          opt.title.isEmpty()
+              ? (opt.mode == BrowserChromeMode::Chromeless && !opt.logicalId.isEmpty() ? opt.logicalId : QStringLiteral("Browser"))
+              : opt.title,
+          w && w->GetProfile() ? w->GetProfile()->GetProject() : QStringLiteral("default"),
+          opt.iconPath.isEmpty() && opt.mode == BrowserChromeMode::Full ? QStringLiteral(":/icons/globe_64dp") : opt.iconPath)
     , adaptixWidget(w)
+    , m_chromeMode(opt.mode)
+    , m_logicalId(opt.logicalId)
 {
     setAutoBlinkEnabled(false);
-    createUI();
+
+    if (m_chromeMode == BrowserChromeMode::Chromeless) {
+        if (m_logicalId.isEmpty())
+            m_logicalId = QStringLiteral("default");
+        createChromelessUI();
+        dockWidget->setWidget(this);
+        const QString init = opt.initialUrl.trimmed();
+        if (!init.isEmpty() && init.compare(QStringLiteral("about:blank"), Qt::CaseInsensitive) != 0)
+            loadUrl(opt.initialUrl);
+        return;
+    }
+
+    createFullUI();
 
     connect(reloadButton, &QToolButton::clicked, this, [this]() {
         QWebEngineView* v = currentWebView();
@@ -308,12 +353,28 @@ EmbeddableBrowserWidget::EmbeddableBrowserWidget(AdaptixWidget* w, const QString
 
     dockWidget->setWidget(this);
 
-    const QString init = initialUrl.trimmed();
+    const QString init = opt.initialUrl.trimmed();
     if (!init.isEmpty() && init.compare(QStringLiteral("about:blank"), Qt::CaseInsensitive) != 0) {
-        loadUrl(initialUrl);
+        loadUrl(opt.initialUrl);
     } else {
         loadHomePage();
     }
+}
+
+void EmbeddableBrowserWidget::createChromelessUI()
+{
+    const QString profileId = QStringLiteral("chromeless_%1").arg(m_logicalId);
+    browserSharedProfile = new QWebEngineProfile(profileId, this);
+    webView = new QWebEngineView(this);
+    auto* page = new QWebEnginePage(browserSharedProfile, webView);
+    webView->setPage(page);
+    webView->setContextMenuPolicy(Qt::DefaultContextMenu);
+
+    auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    layout->addWidget(webView);
+    connectViewSignals(webView);
 }
 
 EmbeddableBrowserWidget::~EmbeddableBrowserWidget()
@@ -379,7 +440,7 @@ bool BrowserPage::acceptNavigationRequest(const QUrl& url, QWebEnginePage::Navig
     return QWebEnginePage::acceptNavigationRequest(url, type, isMainFrame);
 }
 
-void EmbeddableBrowserWidget::createUI()
+void EmbeddableBrowserWidget::createFullUI()
 {
     devToolsView = new QWebEngineView(this);
 
@@ -762,12 +823,19 @@ void EmbeddableBrowserWidget::createUI()
 
 QWebEngineView* EmbeddableBrowserWidget::currentWebView() const
 {
+    if (m_chromeMode == BrowserChromeMode::Chromeless)
+        return webView;
     if (!browserTabStack)
         return webView;
     QWidget* page = browserTabStack->currentWidget();
     if (!page)
         return nullptr;
     return page->findChild<QWebEngineView*>(QString(), Qt::FindDirectChildrenOnly);
+}
+
+QWebEngineView* EmbeddableBrowserWidget::primaryWebView() const
+{
+    return currentWebView();
 }
 
 QWebEngineView* EmbeddableBrowserWidget::viewAtTabIndex(int index) const
@@ -825,6 +893,8 @@ void EmbeddableBrowserWidget::updateTabTitleForView(QWebEngineView* view)
 
 QWebEnginePage* EmbeddableBrowserWidget::createNewTabPage()
 {
+    if (!isFullBrowserChrome())
+        return nullptr;
     if (!browserTabStack || !browserTabBar || !browserSharedProfile)
         return nullptr;
     auto* tabPage = new QWidget(browserTabStack);
@@ -870,7 +940,7 @@ void EmbeddableBrowserWidget::onBrowserTabChanged(int index)
     browserTabStack->setCurrentIndex(index);
     webView = currentWebView();
     syncDevToolsToCurrentTab();
-    if (webView) {
+    if (webView && urlBar) {
         const QUrl u = webView->url();
         const QString barText = isInternalHomeUrl(u) ? QStringLiteral("adaptix:home") : u.toString();
         QSignalBlocker b(urlBar);
@@ -983,12 +1053,19 @@ void EmbeddableBrowserWidget::setProxy(QNetworkProxy::ProxyType type, const QStr
     currentProxyHost = host.trimmed();
     currentProxyPort = port;
 
-    int idx = proxyCombo->findData(type);
-    if (idx >= 0)
-        proxyCombo->setCurrentIndex(idx);
-    proxyHostEdit->setText(currentProxyHost);
-    proxyPortEdit->setText(currentProxyPort > 0 ? QString::number(currentProxyPort) : QString());
-    updateProxyButtonCheckedState();
+    if (isFullBrowserChrome() && proxyCombo && proxyHostEdit && proxyPortEdit) {
+        int idx = proxyCombo->findData(type);
+        if (idx >= 0)
+            proxyCombo->setCurrentIndex(idx);
+        proxyHostEdit->setText(currentProxyHost);
+        proxyPortEdit->setText(currentProxyPort > 0 ? QString::number(currentProxyPort) : QString());
+        updateProxyButtonCheckedState();
+    } else {
+        if (currentProxyType == QNetworkProxy::NoProxy || currentProxyHost.isEmpty())
+            clearProxy();
+        else
+            applyProxy();
+    }
 }
 
 EmbeddableBrowserWidget* EmbeddableBrowserWidget::create(AdaptixWidget* w, const QString& title, const QString& url, const QString& proxyHost, quint16 proxyPort)
@@ -1005,7 +1082,7 @@ void EmbeddableBrowserWidget::onUrlChanged(const QUrl& url)
     auto* v = qobject_cast<QWebEngineView*>(sender());
     if (!v)
         return;
-    if (v == currentWebView()) {
+    if (v == currentWebView() && urlBar) {
         const QString barText = isInternalHomeUrl(url) ? QStringLiteral("adaptix:home") : url.toString();
         if (barText != urlBar->text()) {
             urlBar->setText(barText);
@@ -1021,12 +1098,16 @@ void EmbeddableBrowserWidget::onUrlChanged(const QUrl& url)
 
 void EmbeddableBrowserWidget::onLoadStarted()
 {
+    if (!reloadButton)
+        return;
     reloadButton->setEnabled(false);
 }
 
 void EmbeddableBrowserWidget::onLoadFinished(bool ok)
 {
     Q_UNUSED(ok);
+    if (!reloadButton)
+        return;
     auto* v = qobject_cast<QWebEngineView*>(sender());
     if (!v || v != currentWebView())
         return;
@@ -1036,6 +1117,8 @@ void EmbeddableBrowserWidget::onLoadFinished(bool ok)
 
 void EmbeddableBrowserWidget::updateNavigationActions()
 {
+    if (!backButton || !forwardButton)
+        return;
     QWebEngineView* v = currentWebView();
     if (!v || !v->page())
         return;
@@ -1052,6 +1135,8 @@ void EmbeddableBrowserWidget::updateNavigationActions()
 
 void EmbeddableBrowserWidget::onNavigate()
 {
+    if (!urlBar)
+        return;
     const QString typed = urlBar->text().trimmed();
     if (typed.compare(QStringLiteral("adaptix:home"), Qt::CaseInsensitive) == 0) {
         loadHomePage();
@@ -1064,6 +1149,8 @@ void EmbeddableBrowserWidget::onNavigate()
 
 void EmbeddableBrowserWidget::onProxyApply()
 {
+    if (!proxyCombo || !proxyHostEdit || !proxyPortEdit)
+        return;
     currentProxyType = static_cast<QNetworkProxy::ProxyType>(proxyCombo->currentData().toInt());
     currentProxyHost = proxyHostEdit->text().trimmed();
     currentProxyPort = static_cast<quint16>(proxyPortEdit->text().toUInt());
@@ -1076,6 +1163,8 @@ void EmbeddableBrowserWidget::onProxyApply()
 void EmbeddableBrowserWidget::onProxyTypeChanged(int index)
 {
     Q_UNUSED(index);
+    if (!proxyCombo)
+        return;
     const bool hasProxy = proxyCombo->currentData().toInt() != QNetworkProxy::NoProxy;
     if (proxyHostPortRow)
         proxyHostPortRow->setVisible(hasProxy);
@@ -1153,7 +1242,7 @@ void EmbeddableBrowserWidget::refreshProxyTunnelCombo()
 
 void EmbeddableBrowserWidget::onProxyTunnelPicked(int index)
 {
-    if (!proxyTunnelCombo || index < 0 || !adaptixWidget)
+    if (!proxyTunnelCombo || !proxyCombo || index < 0 || !adaptixWidget)
         return;
     const QString tunnelId = proxyTunnelCombo->itemData(index).toString();
     if (tunnelId == kBrowserProxyTunnelCustomMarker || tunnelId.isEmpty()) {
@@ -1312,7 +1401,7 @@ void EmbeddableBrowserWidget::trimBookmarksToFit()
 
 bool EmbeddableBrowserWidget::eventFilter(QObject* watched, QEvent* event)
 {
-    if (watched == backButton && m_backLongPressTimer) {
+    if (backButton && watched == backButton && m_backLongPressTimer) {
         if (event->type() == QEvent::MouseButtonPress) {
             auto* me = static_cast<QMouseEvent*>(event);
             if (me->button() == Qt::LeftButton) {
@@ -1495,6 +1584,8 @@ bool EmbeddableBrowserWidget::isInternalHomeUrl(const QUrl& url) const
 
 void EmbeddableBrowserWidget::loadHomePage()
 {
+    if (!isFullBrowserChrome() || !bookmarksList)
+        return;
     QWebEngineView* v = currentWebView();
     if (!v)
         return;
@@ -1518,6 +1609,8 @@ void EmbeddableBrowserWidget::reloadHomePageIfVisible()
 
 QString EmbeddableBrowserWidget::buildBookmarksHomeHtml() const
 {
+    if (!bookmarksList)
+        return QStringLiteral("<html><body></body></html>");
     const QString editIconUri = resourcePngAsDataUri(QStringLiteral(":/icons/edit_64dp"));
     const QString deleteIconUri = resourcePngAsDataUri(QStringLiteral(":/icons/delete_64dp"));
 
@@ -1872,6 +1965,8 @@ void EmbeddableBrowserWidget::updateSeparateWindowButtonCheckedState()
 
 void EmbeddableBrowserWidget::onDevToolsToggle()
 {
+    if (!verticalSplitter || !devToolsButton || !devToolsView)
+        return;
     devToolsVisible = !devToolsVisible;
     devToolsButton->setChecked(devToolsVisible);
     updateDevToolsButtonIcon();
@@ -1889,6 +1984,8 @@ void EmbeddableBrowserWidget::clearFloatingWindowReference()
 
 void EmbeddableBrowserWidget::openBrowserInSeparateWindow()
 {
+    if (!isFullBrowserChrome())
+        return;
     if (m_browserFloatingWindow) {
         m_browserFloatingWindow->close();
         return;

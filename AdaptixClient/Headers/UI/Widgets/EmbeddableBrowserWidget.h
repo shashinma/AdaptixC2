@@ -30,6 +30,23 @@ class AdaptixWidget;
 
 class EmbeddableBrowserWidget;
 
+enum class BrowserChromeMode {
+    Full,
+    Chromeless
+};
+
+struct EmbeddableBrowserOptions {
+    BrowserChromeMode mode = BrowserChromeMode::Full;
+    QString           title;
+    QString           initialUrl;
+    QString           logicalId;
+    QString           iconPath;
+
+    static EmbeddableBrowserOptions fullMode(const QString& title = QString(), const QString& initialUrl = QString());
+    static EmbeddableBrowserOptions chromelessMode(const QString& logicalId, const QString& title,
+                                                   const QString& initialUrl = QString(), const QString& iconPath = QString());
+};
+
 class BrowserPage : public QWebEnginePage
 {
     Q_OBJECT
@@ -55,7 +72,11 @@ Q_OBJECT
     friend class BrowserPage;
     friend class AdaptixBrowserFloatingDetail::BrowserFloatingHost;
 
-    AdaptixWidget* adaptixWidget = nullptr;
+    AdaptixWidget*      adaptixWidget = nullptr;
+    BrowserChromeMode   m_chromeMode  = BrowserChromeMode::Full;
+    QString             m_logicalId;
+
+    bool isFullBrowserChrome() const { return m_chromeMode == BrowserChromeMode::Full; }
 
     QTabBar* browserTabBar = nullptr;
     QStackedWidget* browserTabStack = nullptr;
@@ -97,7 +118,8 @@ Q_OBJECT
     QString currentProxyHost;
     quint16 currentProxyPort = 0;
 
-    void createUI();
+    void createFullUI();
+    void createChromelessUI();
     void applyProxy();
     void clearProxy();
     QUrl urlFromUserInput(const QString& input) const;
@@ -132,7 +154,12 @@ public:
     void updateNavigationActions();
     void openBookmarkContextMenuAt(const QPoint& globalPos, QListWidgetItem* item);
     explicit EmbeddableBrowserWidget(AdaptixWidget* w, const QString& title = "Browser", const QString& initialUrl = QString());
+    explicit EmbeddableBrowserWidget(AdaptixWidget* w, const EmbeddableBrowserOptions& options);
     ~EmbeddableBrowserWidget() override;
+
+    BrowserChromeMode chromeMode() const { return m_chromeMode; }
+    QString           logicalId() const { return m_logicalId; }
+    QWebEngineView*   primaryWebView() const;
 
     void loadUrl(const QUrl& url);
     void loadUrl(const QString& url);
@@ -141,7 +168,7 @@ public:
 
     static EmbeddableBrowserWidget* create(AdaptixWidget* w, const QString& title, const QString& url, const QString& proxyHost = QString(), quint16 proxyPort = 0);
 
-    bool isBrowserDevToolsOpen() const { return devToolsVisible; }
+    bool isBrowserDevToolsOpen() const { return isFullBrowserChrome() && devToolsVisible; }
 
     void openBrowserInSeparateWindow();
 
