@@ -62,6 +62,19 @@
         <file alias="picture">icons/picture_64dp.png</file>
         <file alias="keyboard">icons/keyboard_64dp.png</file>
         <file alias="link">icons/link_64dp.png</file>
+        <file alias="globe_64dp">icons/globe_64dp.png</file>
+        <file alias="home_64dp">icons/home_64dp.png</file>
+        <file alias="dev_mode_64dp">icons/dev_mode_64dp.png</file>
+        <file alias="dev_mode_close_64dp">icons/dev_mode_close_64dp.png</file>
+        <file alias="edit_64dp">icons/edit_64dp.png</file>
+        <file alias="delete_64dp">icons/delete_64dp.png</file>
+        <file alias="bookmark_64dp">icons/bookmark_64dp.png</file>
+        <file alias="bookmark_filled_64dp">icons/bookmark_filled_64dp.png</file>
+        <file alias="star_64dp">icons/star_64dp.png</file>
+        <file alias="star_filled_64dp">icons/star_filled_64dp.png</file>
+        <file alias="tab_browser_64dp">icons/tab_browser_64dp.png</file>
+        <file alias="tab_browser_filled_64dp">icons/tab_browser_filled_64dp.png</file>
+        <file alias="external_window_64dp">icons/external_window_64dp.png</file>
         <file alias="unlink">icons/link_off_64dp.png</file>
 
         <file alias="close">icons/close_dp64.png</file>
