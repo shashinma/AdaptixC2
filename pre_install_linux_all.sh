@@ -34,6 +34,7 @@ CLIENT_DEPENDENCIES=(
     qt6-websockets-dev
     qt6-declarative-dev
     qt6-svg-dev
+    qt6-webengine-dev
 )
 
 report_step() {
