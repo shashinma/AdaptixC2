@@ -17,6 +17,9 @@
 #include <UI/Widgets/AxConsoleWidget.h>
 #include <UI/Graph/SessionsGraph.h>
 #include <UI/Dialogs/DialogSyncPacket.h>
+#ifdef HAS_QT_WEBENGINE
+#include <UI/Widgets/EmbeddableBrowserWidget.h>
+#endif
 
 namespace {
 
@@ -1079,6 +1082,15 @@ void AdaptixWidget::setSyncUpdateUI(const bool enabled)
     if (CredentialsDock)   CredentialsDock->SetUpdatesEnabled(enabled);
     if (TasksDock)         TasksDock->SetUpdatesEnabled(enabled);
     if (TargetsDock)       TargetsDock->SetUpdatesEnabled(enabled);
+
+#ifdef HAS_QT_WEBENGINE
+    if (BrowserDock)
+        BrowserDock->setUpdatesEnabled(enabled);
+    for (EmbeddableBrowserWidget* w : chromelessWebPanels) {
+        if (w)
+            w->setUpdatesEnabled(enabled);
+    }
+#endif
 
     for (const auto agent : AgentsMap.values())
         agent->Console->SetUpdatesEnabled(enabled);
