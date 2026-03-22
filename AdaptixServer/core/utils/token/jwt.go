@@ -19,7 +19,6 @@ var refreshTokenLiveHours int
 
 type Claims struct {
 	Username string `json:"username"`
-	Version  string `json:"version"`
 	jwt.RegisteredClaims
 }
 
@@ -38,11 +37,10 @@ func generateRandomKey(length int) (string, error) {
 	return base64.URLEncoding.EncodeToString(bytes), nil
 }
 
-func GenerateAccessToken(username string, version string) (string, error) {
+func GenerateAccessToken(username string) (string, error) {
 	expirationTime := time.Now().Add(time.Duration(accessTokenLiveHours) * time.Hour)
 	claims := &Claims{
 		Username: username,
-		Version:  version,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
 		},
@@ -56,11 +54,10 @@ func GenerateAccessToken(username string, version string) (string, error) {
 	return tokenString, nil
 }
 
-func GenerateRefreshToken(username string, version string) (string, error) {
+func GenerateRefreshToken(username string) (string, error) {
 	expirationTime := time.Now().Add(time.Duration(refreshTokenLiveHours) * time.Hour)
 	claims := &Claims{
 		Username: username,
-		Version:  version,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
 		},
@@ -99,7 +96,6 @@ func ValidateAccessToken() gin.HandlerFunc {
 		}
 
 		ctx.Set("username", claims.Username)
-		ctx.Set("version", claims.Version)
 		ctx.Next()
 	}
 }
@@ -129,7 +125,7 @@ func RefreshTokenHandler(ctx *gin.Context) {
 		return
 	}
 
-	newAccessToken, err := GenerateAccessToken(claims.Username, claims.Version)
+	newAccessToken, err := GenerateAccessToken(claims.Username)
 	if err != nil {
 		_ = ctx.Error(errors.New("could not generate access token"))
 		return

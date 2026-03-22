@@ -17,13 +17,15 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+const SMALL_VERSION = "v1.3"
+
 type Teamserver interface {
 	CreateOTP(otpType string, data interface{}) (string, error)
 	ValidateOTP(token string) (string, interface{}, bool)
 
 	TsClientExists(username string) bool
 	TsClientDisconnect(username string)
-	TsClientConnect(username string, version string, socket *websocket.Conn, clientType uint8, consoleTeamMode bool, subscriptions []string)
+	TsClientConnect(username string, socket *websocket.Conn, clientType uint8, consoleTeamMode bool, subscriptions []string)
 	TsClientSync(username string)
 	TsClientSubscribe(username string, categories []string, consoleTeamMode *bool)
 

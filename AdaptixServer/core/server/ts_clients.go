@@ -7,8 +7,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const SMALL_VERSION = "v1.3"
-
 func (ts *Teamserver) TsClientExists(username string) bool {
 	return ts.Broker.ClientExists(username)
 }
@@ -21,7 +19,7 @@ var InitialSyncCategories = []string{
 	SyncCategoryPivots,
 }
 
-func (ts *Teamserver) TsClientConnect(username string, version string, socket *websocket.Conn, clientType uint8, consoleTeamMode bool, subscriptions []string) {
+func (ts *Teamserver) TsClientConnect(username string, socket *websocket.Conn, clientType uint8, consoleTeamMode bool, subscriptions []string) {
 	// --- PRE HOOK ---
 	preEvent := &eventing.EventDataClientConnect{Username: username}
 	if !ts.EventManager.Emit(eventing.EventClientConnect, eventing.HookPre, preEvent) {
@@ -29,9 +27,7 @@ func (ts *Teamserver) TsClientConnect(username string, version string, socket *w
 	}
 	// ----------------
 
-	supportsBatchSync := version == SMALL_VERSION
-
-	client := NewClientHandler(username, socket, supportsBatchSync, ts.Broker, clientType, consoleTeamMode)
+	client := NewClientHandler(username, socket, ts.Broker, clientType, consoleTeamMode)
 	client.Start()
 
 	requested := make(map[string]struct{}, len(subscriptions))

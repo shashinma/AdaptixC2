@@ -21,7 +21,6 @@ const (
 type Credentials struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
-	Version  string `json:"version"`
 }
 
 type AccessJWT struct {
@@ -59,23 +58,23 @@ func (tc *TsConnector) tcLogin(ctx *gin.Context) {
 		}
 	}
 
-	accessToken, err := token.GenerateAccessToken(creds.Username, creds.Version)
+	accessToken, err := token.GenerateAccessToken(creds.Username)
 	if err != nil {
 		_ = ctx.Error(errors.New("could not generate access token"))
 		return
 	}
 
-	refreshToken, err := token.GenerateRefreshToken(creds.Username, creds.Version)
+	refreshToken, err := token.GenerateRefreshToken(creds.Username)
 	if err != nil {
 		_ = ctx.Error(errors.New("could not generate refresh token"))
 		return
 	}
 
-	ctx.JSON(http.StatusOK, gin.H{"access_token": accessToken, "refresh_token": refreshToken})
+	ctx.JSON(http.StatusOK, gin.H{"access_token": accessToken, "refresh_token": refreshToken, "version": SMALL_VERSION})
 }
 
-func (tc *TsConnector) tcWebsocketConnect(username string, version string, wsConn *websocket.Conn, clientType uint8, consoleTeamMode bool, subscriptions []string) {
-	tc.teamserver.TsClientConnect(username, version, wsConn, clientType, consoleTeamMode, subscriptions)
+func (tc *TsConnector) tcWebsocketConnect(username string, wsConn *websocket.Conn, clientType uint8, consoleTeamMode bool, subscriptions []string) {
+	tc.teamserver.TsClientConnect(username, wsConn, clientType, consoleTeamMode, subscriptions)
 	for {
 		_, _, err := wsConn.ReadMessage()
 		if err == nil {
@@ -174,7 +173,7 @@ func (tc *TsConnector) tcConnectOTP(ctx *gin.Context) {
 		return
 	}
 
-	go tc.tcWebsocketConnect(wsData.Username, wsData.Version, wsConn, clientType, wsData.ConsoleTeamMode, wsData.Subscriptions)
+	go tc.tcWebsocketConnect(wsData.Username, wsConn, clientType, wsData.ConsoleTeamMode, wsData.Subscriptions)
 }
 
 func (tc *TsConnector) tcChannelOTP(ctx *gin.Context) {

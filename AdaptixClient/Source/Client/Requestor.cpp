@@ -53,12 +53,16 @@ bool HttpReqLogin(AuthProfile* profile)
     QJsonObject dataJson;
     dataJson["username"] = profile->GetUsername();
     dataJson["password"] = profile->GetPassword();
-    dataJson["version"]  = SMALL_VERSION;
     QByteArray jsonData = QJsonDocument(dataJson).toJson();
 
     QString sUrl = profile->GetURL() + "/login";
     QJsonObject jsonObject = HttpReq(sUrl, jsonData, QString());
-    if (jsonObject.contains("access_token") && jsonObject.contains("refresh_token")) {
+    if (jsonObject.contains("access_token") && jsonObject.contains("refresh_token") && jsonObject.contains("version")) {
+        QString version = jsonObject["version"].toString();
+        if ( version != SMALL_VERSION) {
+            profile->message = QString("Version mismatch: Server %1, Client %2").arg(version).arg(SMALL_VERSION);
+            return false;
+        }
         profile->SetAccessToken( jsonObject["access_token"].toString() );
         profile->SetRefreshToken( jsonObject["refresh_token"].toString() );
         return true;

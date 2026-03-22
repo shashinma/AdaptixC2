@@ -16,7 +16,6 @@ type AccessOTP struct {
 
 type ConnectOTPData struct {
 	Username        string
-	Version         string
 	ClientType      uint8    `json:"client_type,omitempty"`
 	ConsoleTeamMode bool     `json:"console_team_mode,omitempty"`
 	Subscriptions   []string `json:"subscriptions,omitempty"`
@@ -70,7 +69,7 @@ func (tc *TsConnector) tcOTP_Generate(ctx *gin.Context) {
 	switch accessOTP.Type {
 
 	case "connect":
-		usernameStr, version, ok := tc.extractUserContext(ctx)
+		usernameStr, ok := tc.extractUserContext(ctx)
 		if !ok {
 			return
 		}
@@ -83,11 +82,10 @@ func (tc *TsConnector) tcOTP_Generate(ctx *gin.Context) {
 		}
 
 		connectData.Username = usernameStr
-		connectData.Version = version
 		data = connectData
 
 	case "channel_tunnel", "channel_terminal", "channel_agent_build":
-		usernameStr, _, ok := tc.extractUserContext(ctx)
+		usernameStr, ok := tc.extractUserContext(ctx)
 		if !ok {
 			return
 		}
@@ -120,22 +118,19 @@ func (tc *TsConnector) tcOTP_Generate(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{"message": otp, "ok": true})
 }
 
-func (tc *TsConnector) extractUserContext(ctx *gin.Context) (string, string, bool) {
+func (tc *TsConnector) extractUserContext(ctx *gin.Context) (string, bool) {
 	username, exists := ctx.Get("username")
 	if !exists {
 		ctx.JSON(http.StatusOK, gin.H{"message": "username not found in context", "ok": false})
-		return "", "", false
+		return "", false
 	}
 	usernameStr, ok := username.(string)
 	if !ok || usernameStr == "" {
 		ctx.JSON(http.StatusOK, gin.H{"message": "invalid username in context", "ok": false})
-		return "", "", false
+		return "", false
 	}
 
-	versionValue, _ := ctx.Get("version")
-	version, _ := versionValue.(string)
-
-	return usernameStr, version, true
+	return usernameStr, true
 }
 
 func (tc *TsConnector) tcOTP_DownloadSync(ctx *gin.Context) {

@@ -74,8 +74,8 @@ func (ts *Teamserver) TsSyncExcludeClientWithCategory(username string, packet in
 	ts.Broker.PublishExcludeWithCategory(username, packet, category)
 }
 
-func (ts *Teamserver) TsSyncConsole(packet interface{}, taskClient string) {
-	ts.Broker.PublishConsole(packet, taskClient)
+func (ts *Teamserver) TsSyncConsole(packet interface{}, taskClient string, initiator string) {
+	ts.Broker.PublishConsole(packet, taskClient, initiator)
 }
 
 func (ts *Teamserver) TsSyncAgentActivated(packet interface{}) {
@@ -170,59 +170,37 @@ func (ts *Teamserver) TsSyncCategories(client *ClientHandler, categories []strin
 	ts.sendSyncPackets(client, packets)
 }
 
-//	packets = append(packets, ts.TsPresyncExtenders()...)
-//	packets = append(packets, ts.TsPresyncListeners()...)
-//	packets = append(packets, ts.TsPresyncAgents()...)
-//	packets = append(packets, ts.TsPresyncChat()...)
-//	packets = append(packets, ts.TsPresyncDownloads()...)
-//	packets = append(packets, ts.TsPresyncScreenshots()...)
-//	packets = append(packets, ts.TsPresyncTunnels()...)
-//	packets = append(packets, ts.TsPresyncNotifications()...)
-//	packets = append(packets, ts.TsPresyncPivots()...)
-//	packets = append(packets, ts.TsPresyncCredentials()...)
-//	packets = append(packets, ts.TsPresyncTargets()...)
-
 func (ts *Teamserver) sendSyncPackets(client *ClientHandler, packets []interface{}) {
 	const BATCH_SIZE = 500
 	estimatedBatches := (len(packets) / BATCH_SIZE) + 1
 	serializedPackets := make([][]byte, 0, estimatedBatches)
 
-	if !client.VersionSupport() {
-		serializedPackets = make([][]byte, 0, len(packets))
-		for _, p := range packets {
-			data := serializePacket(p)
+	categoryMap := make(map[string][]interface{}, 16)
+	categoryOrder := make([]string, 0, 16)
+
+	for _, p := range packets {
+		category := getPacketCategory(p)
+		if _, exists := categoryMap[category]; !exists {
+			categoryOrder = append(categoryOrder, category)
+		}
+		categoryMap[category] = append(categoryMap[category], p)
+	}
+
+	for _, category := range categoryOrder {
+		categoryPackets := categoryMap[category]
+
+		for i := 0; i < len(categoryPackets); i += BATCH_SIZE {
+			end := i + BATCH_SIZE
+			if end > len(categoryPackets) {
+				end = len(categoryPackets)
+			}
+
+			batch := categoryPackets[i:end]
+			batchPacket := CreateSpSyncCategoryBatch(category, batch)
+
+			data := serializePacket(batchPacket)
 			if data != nil {
 				serializedPackets = append(serializedPackets, data)
-			}
-		}
-	} else {
-		categoryMap := make(map[string][]interface{}, 16)
-		categoryOrder := make([]string, 0, 16)
-
-		for _, p := range packets {
-			category := getPacketCategory(p)
-			if _, exists := categoryMap[category]; !exists {
-				categoryOrder = append(categoryOrder, category)
-			}
-			categoryMap[category] = append(categoryMap[category], p)
-		}
-
-		for _, category := range categoryOrder {
-			categoryPackets := categoryMap[category]
-
-			for i := 0; i < len(categoryPackets); i += BATCH_SIZE {
-				end := i + BATCH_SIZE
-				if end > len(categoryPackets) {
-					end = len(categoryPackets)
-				}
-
-				batch := categoryPackets[i:end]
-				batchPacket := CreateSpSyncCategoryBatch(category, batch)
-
-				data := serializePacket(batchPacket)
-				if data != nil {
-					serializedPackets = append(serializedPackets, data)
-				}
 			}
 		}
 	}

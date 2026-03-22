@@ -19,6 +19,7 @@ class AuthProfile
     bool consoleMultiuser = true;
 
 public:
+    QString message = "";
     bool valid;
 
     AuthProfile();
