@@ -3219,7 +3219,7 @@ void QlementineStyle::drawComplexControl(
           const auto& textColor = groupBoxTitleColor(mouse, w);
           // Use alignment from groupBoxOpt or default to left
           const auto hAlign = groupBoxOpt->textAlignment & Qt::AlignHorizontal_Mask;
-          const auto textFlags = Qt::AlignVCenter | Qt::AlignBaseline | Qt::TextSingleLine | (hAlign ? hAlign : Qt::AlignLeft);
+          const auto textFlags = Qt::AlignVCenter | Qt::AlignBaseline | Qt::TextSingleLine | Qt::TextHideMnemonic | (hAlign ? hAlign : Qt::AlignLeft);
           p->setFont(font);
           p->setPen(textColor);
           p->setRenderHint(QPainter::Antialiasing, true);
