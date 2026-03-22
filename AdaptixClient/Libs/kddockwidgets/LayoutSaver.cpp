@@ -444,12 +444,10 @@ QByteArray LayoutSaver::serializeLayout() const
             layout.mainWindows.push_back(mainWindow->serialize());
     }
 
-    const Vector<Core::FloatingWindow *> floatingWindows =
-        d->m_dockRegistry->floatingWindows(/*includeBeingDeleted=*/false, /*honourSkipped=*/true);
+    const auto floatingWindows = Core::floatingWindowsForAffinity(d->m_affinityNames);
     layout.floatingWindows.reserve(floatingWindows.size());
     for (Core::FloatingWindow *floatingWindow : floatingWindows) {
-        if (d->matchesAffinity(floatingWindow->affinities()))
-            layout.floatingWindows.push_back(floatingWindow->serialize());
+        layout.floatingWindows.push_back(floatingWindow->serialize());
     }
 
     // Closed dock widgets also have interesting things to save, like geometry and placeholder info
@@ -468,7 +466,7 @@ QByteArray LayoutSaver::serializeLayout() const
     for (Core::DockWidget *dockWidget : dockWidgets) {
         if (!dockWidget->skipsRestore() && d->matchesAffinity(dockWidget->affinities())) {
             auto dw = dockWidget->d->serialize();
-            dw->lastPosition = dockWidget->d->lastPosition()->serialize();
+            dw->lastPosition = dockWidget->d->lastPosition()->serialize(d->m_affinityNames);
             layout.allDockWidgets.push_back(dw);
         }
     }
