@@ -15,7 +15,7 @@ import (
 
 type TeamserverBridge interface {
 	TsAgentCommand(agentName string, agentId string, clientName string, hookId string, handlerId string, cmdline string, ui bool, args map[string]any) error
-	TsAgentConsoleOutput(agentId string, messageType int, message string, clearText string, store bool)
+	TsAgentConsoleOutput(agentId string, client string, messageType int, message string, clearText string, store bool)
 	TsAgentConsoleErrorCommand(agentId string, client string, cmdline string, message string, HookId string, HandlerId string)
 
 	AxGetAgentContext(agentId string) (agentName string, listenerRegName string, osType int, err error)
@@ -424,7 +424,7 @@ func (sm *ScriptManager) ListProfileScriptsWithContent() []ScriptWithContent {
 	return result
 }
 
-func (sm *ScriptManager) ResolveAndExecutePreHook(agentName string, agentId string, listenerRegName string, os int, cmdline string, args map[string]interface{}) (hookId string, handlerId string, preHookHandled bool, err error) {
+func (sm *ScriptManager) ResolveAndExecutePreHook(agentName string, agentId string, listenerRegName string, os int, cmdline string, args map[string]interface{}, client string) (hookId string, handlerId string, preHookHandled bool, err error) {
 	resolved, resolveErr := sm.CommandStore.ResolveFromCmdline(agentName, listenerRegName, os, cmdline)
 	if resolveErr != nil {
 		return "", "", false, nil
@@ -433,7 +433,7 @@ func (sm *ScriptManager) ResolveAndExecutePreHook(agentName string, agentId stri
 	cmdDef := resolved.GetEffectiveCommand()
 
 	if cmdDef.HasPreHook && cmdDef.PreHookFunc != nil && resolved.Engine != nil {
-		preHookErr := sm.executePreHook(resolved.Engine, cmdDef.PreHookFunc, agentId, cmdline, args)
+		preHookErr := sm.executePreHook(resolved.Engine, cmdDef.PreHookFunc, agentId, cmdline, args, client)
 		if preHookErr != nil {
 			return "", "", true, preHookErr
 		}
@@ -441,11 +441,11 @@ func (sm *ScriptManager) ResolveAndExecutePreHook(agentName string, agentId stri
 	}
 
 	if cmdDef.HasPostHook && cmdDef.PostHookFunc != nil && resolved.Engine != nil {
-		hookId = sm.HookStore.RegisterPostHook(resolved.Engine, cmdDef.PostHookFunc, agentId, "server")
+		hookId = sm.HookStore.RegisterPostHook(resolved.Engine, cmdDef.PostHookFunc, agentId, client)
 	}
 
 	if cmdDef.HasHandler && cmdDef.HandlerFunc != nil && resolved.Engine != nil {
-		handlerId = sm.HookStore.RegisterHandler(resolved.Engine, cmdDef.HandlerFunc, agentId, "server")
+		handlerId = sm.HookStore.RegisterHandler(resolved.Engine, cmdDef.HandlerFunc, agentId, client)
 	}
 
 	return hookId, handlerId, false, nil
@@ -457,8 +457,8 @@ func (sm *ScriptManager) ParseCommandPublic(cmdline string, resolved *ResolvedCo
 }
 
 // /---
-func (sm *ScriptManager) ExecutePreHookPublic(engine *ScriptEngine, fn goja.Callable, agentId string, cmdline string, args map[string]interface{}) error {
-	return sm.executePreHook(engine, fn, agentId, cmdline, args)
+func (sm *ScriptManager) ExecutePreHookPublic(engine *ScriptEngine, fn goja.Callable, agentId string, cmdline string, args map[string]interface{}, client string) error {
+	return sm.executePreHook(engine, fn, agentId, cmdline, args, client)
 }
 
 // /---
@@ -466,13 +466,13 @@ func (sm *ScriptManager) ResolveFileArgsPublic(engine *ScriptEngine, parsed *Par
 	return sm.resolveFileArgs(engine, parsed)
 }
 
-func (sm *ScriptManager) executePreHook(engine *ScriptEngine, fn goja.Callable, agentId string, cmdline string, args map[string]interface{}) error {
+func (sm *ScriptManager) executePreHook(engine *ScriptEngine, fn goja.Callable, agentId string, cmdline string, args map[string]interface{}, client string) error {
 	argsCopy := make(map[string]interface{}, len(args))
 	for k, v := range args {
 		argsCopy[k] = v
 	}
 
-	_, err := engine.CallCallable(fn,
+	_, err := engine.CallCallableAs(client, fn,
 		engine.ToValue(agentId),
 		engine.ToValue(cmdline),
 		engine.ToValue(argsCopy),
@@ -534,7 +534,7 @@ func (sm *ScriptManager) resolveAgentCommand(agentId string, cmdline string) (*a
 }
 
 // /---
-func (sm *ScriptManager) ExecuteCommand(fromEngine *ScriptEngine, agentId string, cmdline string, postHookFn goja.Callable, handlerFn goja.Callable) error {
+func (sm *ScriptManager) ExecuteCommand(fromEngine *ScriptEngine, agentId string, cmdline string, clientName string, postHookFn goja.Callable, handlerFn goja.Callable) error {
 	ctx, err := sm.resolveAgentCommand(agentId, cmdline)
 	if err != nil {
 		return err
@@ -550,17 +550,17 @@ func (sm *ScriptManager) ExecuteCommand(fromEngine *ScriptEngine, agentId string
 	handlerId := ""
 
 	if postHookFn != nil {
-		hookId = sm.HookStore.RegisterPostHook(fromEngine, postHookFn, agentId, "server")
+		hookId = sm.HookStore.RegisterPostHook(fromEngine, postHookFn, agentId, clientName)
 	}
 	if handlerFn != nil {
-		handlerId = sm.HookStore.RegisterHandler(fromEngine, handlerFn, agentId, "server")
+		handlerId = sm.HookStore.RegisterHandler(fromEngine, handlerFn, agentId, clientName)
 	}
 
-	return sm.teamserver.TsAgentCommand(ctx.agentName, agentId, "server", hookId, handlerId, cmdline, false, ctx.parsed.Args)
+	return sm.teamserver.TsAgentCommand(ctx.agentName, agentId, clientName, hookId, handlerId, cmdline, false, ctx.parsed.Args)
 }
 
 // /---
-func (sm *ScriptManager) ExecuteAlias(fromEngine *ScriptEngine, agentId string, aliasCmdline string) error {
+func (sm *ScriptManager) ExecuteAlias(fromEngine *ScriptEngine, agentId string, aliasCmdline string, clientName string) error {
 	ctx, err := sm.resolveAgentCommand(agentId, aliasCmdline)
 	if err != nil {
 		return err
@@ -575,7 +575,7 @@ func (sm *ScriptManager) ExecuteAlias(fromEngine *ScriptEngine, agentId string, 
 	cmdDef := ctx.resolved.GetEffectiveCommand()
 
 	if cmdDef.HasPreHook && cmdDef.PreHookFunc != nil && ctx.resolved.Engine != nil {
-		preHookErr := sm.executePreHook(ctx.resolved.Engine, cmdDef.PreHookFunc, agentId, aliasCmdline, ctx.parsed.Args)
+		preHookErr := sm.executePreHook(ctx.resolved.Engine, cmdDef.PreHookFunc, agentId, aliasCmdline, ctx.parsed.Args, clientName)
 		if preHookErr != nil {
 			return preHookErr
 		}
@@ -586,16 +586,16 @@ func (sm *ScriptManager) ExecuteAlias(fromEngine *ScriptEngine, agentId string, 
 	handlerId := ""
 
 	if cmdDef.HasPostHook && cmdDef.PostHookFunc != nil && ctx.resolved.Engine != nil {
-		hookId = sm.HookStore.RegisterPostHook(ctx.resolved.Engine, cmdDef.PostHookFunc, agentId, "server")
+		hookId = sm.HookStore.RegisterPostHook(ctx.resolved.Engine, cmdDef.PostHookFunc, agentId, clientName)
 	}
 	if cmdDef.HasHandler && cmdDef.HandlerFunc != nil && ctx.resolved.Engine != nil {
-		handlerId = sm.HookStore.RegisterHandler(ctx.resolved.Engine, cmdDef.HandlerFunc, agentId, "server")
+		handlerId = sm.HookStore.RegisterHandler(ctx.resolved.Engine, cmdDef.HandlerFunc, agentId, clientName)
 	}
 
-	return sm.teamserver.TsAgentCommand(ctx.agentName, agentId, "server", hookId, handlerId, aliasCmdline, false, ctx.parsed.Args)
+	return sm.teamserver.TsAgentCommand(ctx.agentName, agentId, clientName, hookId, handlerId, aliasCmdline, false, ctx.parsed.Args)
 }
 
-func (sm *ScriptManager) ExecuteAliasWithHooks(fromEngine *ScriptEngine, agentId string, displayCmdline string, aliasCmdline string, message string, postHookFn goja.Callable, handlerFn goja.Callable) error {
+func (sm *ScriptManager) ExecuteAliasWithHooks(fromEngine *ScriptEngine, agentId string, displayCmdline string, aliasCmdline string, message string, clientName string, postHookFn goja.Callable, handlerFn goja.Callable) error {
 	ctx, err := sm.resolveAgentCommand(agentId, aliasCmdline)
 	if err != nil {
 		return err
@@ -610,7 +610,7 @@ func (sm *ScriptManager) ExecuteAliasWithHooks(fromEngine *ScriptEngine, agentId
 	cmdDef := ctx.resolved.GetEffectiveCommand()
 
 	if cmdDef.HasPreHook && cmdDef.PreHookFunc != nil && ctx.resolved.Engine != nil {
-		preHookErr := sm.executePreHook(ctx.resolved.Engine, cmdDef.PreHookFunc, agentId, aliasCmdline, ctx.parsed.Args)
+		preHookErr := sm.executePreHook(ctx.resolved.Engine, cmdDef.PreHookFunc, agentId, aliasCmdline, ctx.parsed.Args, clientName)
 		if preHookErr != nil {
 			return preHookErr
 		}
@@ -621,15 +621,15 @@ func (sm *ScriptManager) ExecuteAliasWithHooks(fromEngine *ScriptEngine, agentId
 	handlerId := ""
 
 	if postHookFn != nil {
-		hookId = sm.HookStore.RegisterPostHook(fromEngine, postHookFn, agentId, "server")
+		hookId = sm.HookStore.RegisterPostHook(fromEngine, postHookFn, agentId, clientName)
 	} else if cmdDef.HasPostHook && cmdDef.PostHookFunc != nil && ctx.resolved.Engine != nil {
-		hookId = sm.HookStore.RegisterPostHook(ctx.resolved.Engine, cmdDef.PostHookFunc, agentId, "server")
+		hookId = sm.HookStore.RegisterPostHook(ctx.resolved.Engine, cmdDef.PostHookFunc, agentId, clientName)
 	}
 
 	if handlerFn != nil {
-		handlerId = sm.HookStore.RegisterHandler(fromEngine, handlerFn, agentId, "server")
+		handlerId = sm.HookStore.RegisterHandler(fromEngine, handlerFn, agentId, clientName)
 	} else if cmdDef.HasHandler && cmdDef.HandlerFunc != nil && ctx.resolved.Engine != nil {
-		handlerId = sm.HookStore.RegisterHandler(ctx.resolved.Engine, cmdDef.HandlerFunc, agentId, "server")
+		handlerId = sm.HookStore.RegisterHandler(ctx.resolved.Engine, cmdDef.HandlerFunc, agentId, clientName)
 	}
 
 	cmdlineForDisplay := displayCmdline
@@ -640,7 +640,7 @@ func (sm *ScriptManager) ExecuteAliasWithHooks(fromEngine *ScriptEngine, agentId
 		ctx.parsed.Args["message"] = message
 	}
 
-	return sm.teamserver.TsAgentCommand(ctx.agentName, agentId, "server", hookId, handlerId, cmdlineForDisplay, false, ctx.parsed.Args)
+	return sm.teamserver.TsAgentCommand(ctx.agentName, agentId, clientName, hookId, handlerId, cmdlineForDisplay, false, ctx.parsed.Args)
 }
 
 func (sm *ScriptManager) GetAgents() map[string]interface{} {
@@ -681,11 +681,11 @@ func (sm *ScriptManager) GetTargets() []interface{} {
 	return sm.teamserver.AxGetTargets()
 }
 
-func (sm *ScriptManager) ConsoleMessage(agentId string, msgType int, message string, clearText string) {
+func (sm *ScriptManager) ConsoleMessage(agentId string, client string, msgType int, message string, clearText string) {
 	if sm.teamserver == nil {
 		return
 	}
-	sm.teamserver.TsAgentConsoleOutput(agentId, msgType, message, clearText, false) // todo underlaycopy
+	sm.teamserver.TsAgentConsoleOutput(agentId, client, msgType, message, clearText, false)
 }
 
 // /---

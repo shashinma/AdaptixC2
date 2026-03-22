@@ -21,6 +21,7 @@ type ScriptEngine struct {
 	scriptDir     string
 	allowedRoots  []string
 	importedFiles []string
+	currentClient string
 }
 
 func NewScriptEngine(name string, manager *ScriptManager) *ScriptEngine {
@@ -166,6 +167,25 @@ func (e *ScriptEngine) CallCallable(fn goja.Callable, args ...goja.Value) (goja.
 		return nil, fmt.Errorf("error calling callable in engine '%s': %w", e.name, err)
 	}
 	return result, nil
+}
+
+func (e *ScriptEngine) CallCallableAs(client string, fn goja.Callable, args ...goja.Value) (goja.Value, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	prev := e.currentClient
+	e.currentClient = client
+	defer func() { e.currentClient = prev }()
+
+	result, err := fn(goja.Undefined(), args...)
+	if err != nil {
+		return nil, fmt.Errorf("error calling callable in engine '%s': %w", e.name, err)
+	}
+	return result, nil
+}
+
+func (e *ScriptEngine) CurrentClient() string {
+	return e.currentClient
 }
 
 // /---

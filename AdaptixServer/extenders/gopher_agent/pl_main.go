@@ -36,7 +36,7 @@ type Teamserver interface {
 	TsAgentBuildExecute(builderId string, workingDir string, program string, args ...string) error
 	TsAgentBuildLog(builderId string, status int, message string) error
 
-	TsAgentConsoleOutput(agentId string, messageType int, message string, clearText string, store bool)
+	TsAgentConsoleOutput(agentId string, client string, messageType int, message string, clearText string, store bool)
 
 	TsPivotCreate(pivotId string, pAgentId string, chAgentId string, pivotName string, isRestore bool) error
 	TsGetPivotInfoByName(pivotName string) (string, string, string)

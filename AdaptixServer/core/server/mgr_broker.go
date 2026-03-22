@@ -77,6 +77,7 @@ type BrokerMessage struct {
 	Priority   int
 	Category   string
 	TaskClient string
+	Initiator  string
 	RawPacket  interface{}
 	MsgType    int    // MsgTypeEvent, MsgTypeState
 	StateKey   string // state-msg
@@ -95,10 +96,9 @@ func taskTypeFromPacket(packet interface{}) int {
 }
 
 type ClientHandler struct {
-	username       string
-	socket         *websocket.Conn
-	socketMu       sync.Mutex
-	versionSupport bool
+	username string
+	socket   *websocket.Conn
+	socketMu sync.Mutex
 
 	sendChan chan []byte
 	syncChan chan []byte
@@ -222,8 +222,15 @@ func (mb *MessageBroker) dispatch(msg *BrokerMessage) {
 					continue
 				}
 			} else if msg.Category == SyncCategoryConsoleHistory {
+				if !client.IsSubscribed(SyncCategoryConsoleHistory) {
+					continue
+				}
 				if !client.ConsoleTeamMode() {
-					if msg.TaskClient == "" || msg.TaskClient != operator {
+					if msg.TaskClient != "" {
+						if msg.TaskClient != operator {
+							continue
+						}
+					} else if msg.Initiator != "" && msg.Initiator != operator {
 						continue
 					}
 				}
@@ -399,7 +406,7 @@ func (mb *MessageBroker) PublishExcludeWithCategory(username string, packet inte
 	}
 }
 
-func (mb *MessageBroker) PublishConsole(packet interface{}, taskClient string) {
+func (mb *MessageBroker) PublishConsole(packet interface{}, taskClient string, initiator string) {
 	data := serializePacket(packet)
 	if data == nil {
 		return
@@ -410,6 +417,7 @@ func (mb *MessageBroker) PublishConsole(packet interface{}, taskClient string) {
 		Priority:   PriorityNormal,
 		Category:   SyncCategoryConsoleHistory,
 		TaskClient: taskClient,
+		Initiator:  initiator,
 	}
 
 	select {
@@ -497,11 +505,10 @@ func serializePacket(packet interface{}) []byte {
 	return result
 }
 
-func NewClientHandler(username string, socket *websocket.Conn, versionSupport bool, broker *MessageBroker, clientType uint8, consoleTeamMode bool) *ClientHandler {
+func NewClientHandler(username string, socket *websocket.Conn, broker *MessageBroker, clientType uint8, consoleTeamMode bool) *ClientHandler {
 	ch := &ClientHandler{
 		username:        username,
 		socket:          socket,
-		versionSupport:  versionSupport,
 		sendChan:        make(chan []byte, SendBufferSize),
 		syncChan:        make(chan []byte, SyncBufferSize),
 		done:            make(chan struct{}),
@@ -666,10 +673,6 @@ func (ch *ClientHandler) IsSynced() bool {
 
 func (ch *ClientHandler) Username() string {
 	return ch.username
-}
-
-func (ch *ClientHandler) VersionSupport() bool {
-	return ch.versionSupport
 }
 
 func (ch *ClientHandler) Socket() *websocket.Conn {

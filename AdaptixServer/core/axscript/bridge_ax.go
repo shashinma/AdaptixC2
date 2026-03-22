@@ -114,7 +114,7 @@ func registerAxBridge(engine *ScriptEngine) {
 			}
 		}
 
-		err := engine.manager.ExecuteCommand(engine, agentId, cmdline, postHookFn, handlerFn)
+		err := engine.manager.ExecuteCommand(engine, agentId, cmdline, engine.CurrentClient(), postHookFn, handlerFn)
 		if err != nil {
 			panic(rt.NewGoError(err))
 		}
@@ -157,7 +157,7 @@ func registerAxBridge(engine *ScriptEngine) {
 			}
 		}
 
-		err := engine.manager.ExecuteAliasWithHooks(engine, agentId, displayCmdline, aliasCmdline, message, postHookFn, handlerFn)
+		err := engine.manager.ExecuteAliasWithHooks(engine, agentId, displayCmdline, aliasCmdline, message, engine.CurrentClient(), postHookFn, handlerFn)
 		if err != nil {
 			panic(rt.NewGoError(err))
 		}
@@ -183,7 +183,7 @@ func registerAxBridge(engine *ScriptEngine) {
 		if fn, ok := goja.AssertFunction(call.Argument(4)); ok {
 			hookFn = fn
 		}
-		err := engine.manager.ExecuteAliasWithHooks(engine, agentId, displayCmdline, aliasCmdline, message, hookFn, nil)
+		err := engine.manager.ExecuteAliasWithHooks(engine, agentId, displayCmdline, aliasCmdline, message, engine.CurrentClient(), hookFn, nil)
 		if err != nil {
 			panic(rt.NewGoError(err))
 		}
@@ -208,7 +208,7 @@ func registerAxBridge(engine *ScriptEngine) {
 		if fn, ok := goja.AssertFunction(call.Argument(4)); ok {
 			handlerFn = fn
 		}
-		err := engine.manager.ExecuteAliasWithHooks(engine, agentId, displayCmdline, aliasCmdline, message, nil, handlerFn)
+		err := engine.manager.ExecuteAliasWithHooks(engine, agentId, displayCmdline, aliasCmdline, message, engine.CurrentClient(), nil, handlerFn)
 		if err != nil {
 			panic(rt.NewGoError(err))
 		}
@@ -268,7 +268,7 @@ func registerAxBridge(engine *ScriptEngine) {
 		if len(call.Arguments) > 3 {
 			clearText = call.Argument(3).String()
 		}
-		engine.manager.ConsoleMessage(agentId, msgType, message, clearText)
+		engine.manager.ConsoleMessage(agentId, engine.CurrentClient(), msgType, message, clearText)
 		return goja.Undefined()
 	})
 
@@ -296,7 +296,7 @@ func registerAxBridge(engine *ScriptEngine) {
 		if fn, ok := goja.AssertFunction(call.Argument(2)); ok {
 			hookFn = fn
 		}
-		err := engine.manager.ExecuteCommand(engine, agentId, cmdline, hookFn, nil)
+		err := engine.manager.ExecuteCommand(engine, agentId, cmdline, engine.CurrentClient(), hookFn, nil)
 		if err != nil {
 			panic(rt.NewGoError(err))
 		}
@@ -313,7 +313,7 @@ func registerAxBridge(engine *ScriptEngine) {
 		if fn, ok := goja.AssertFunction(call.Argument(2)); ok {
 			handlerFn = fn
 		}
-		err := engine.manager.ExecuteCommand(engine, agentId, cmdline, nil, handlerFn)
+		err := engine.manager.ExecuteCommand(engine, agentId, cmdline, engine.CurrentClient(), nil, handlerFn)
 		if err != nil {
 			panic(rt.NewGoError(err))
 		}

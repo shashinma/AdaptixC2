@@ -77,7 +77,7 @@ func (tm *TaskManager) syncTaskCreate(agentId string, agent *Agent, taskData *ad
 
 	if taskData.Type != adaptix.TASK_TYPE_BROWSER {
 		packet_console := CreateSpAgentConsoleTaskSync(*taskData)
-		tm.ts.TsSyncConsole(packet_console, taskData.Client)
+		tm.ts.TsSyncConsole(packet_console, taskData.Client, taskData.Client)
 
 		_ = tm.ts.DBMS.DbConsoleInsert(agentId, packet_console)
 	}
@@ -97,7 +97,7 @@ func (tm *TaskManager) syncTaskUpdate(agentId string, agent *Agent, taskData *ad
 
 	if taskData.Type != adaptix.TASK_TYPE_BROWSER {
 		packet_console := CreateSpAgentConsoleTaskUpd(*taskData)
-		tm.ts.TsSyncConsole(packet_console, taskData.Client)
+		tm.ts.TsSyncConsole(packet_console, taskData.Client, taskData.Client)
 
 		_ = tm.ts.DBMS.DbConsoleInsert(agentId, packet_console)
 	}
@@ -130,7 +130,7 @@ func (tm *TaskManager) executeServerHandler(taskData *adaptix.TaskData) {
 		"text":    taskData.ClearText,
 		"type":    taskData.MessageType,
 	}
-	_ = tm.ts.TsAxScriptExecHandler(taskData.HandlerId, handlerData)
+	_ = tm.ts.TsAxScriptExecHandler(taskData.HandlerId, handlerData, taskData.Client)
 	taskData.HandlerId = ""
 }
 

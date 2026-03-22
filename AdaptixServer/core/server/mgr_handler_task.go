@@ -29,7 +29,7 @@ func (h *TaskTaskHandler) Update(tm *TaskManager, agent *Agent, task *adaptix.Ta
 			"type":      task.MessageType,
 			"completed": task.Completed,
 		}
-		result, _ := tm.ts.TsAxScriptExecPostHook(task.HookId, hookData)
+		result, _ := tm.ts.TsAxScriptExecPostHook(task.HookId, hookData, task.Client)
 		if result != nil {
 			if msg, ok := result["message"].(string); ok {
 				task.Message = msg

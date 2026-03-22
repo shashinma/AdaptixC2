@@ -31,7 +31,7 @@ type Teamserver interface {
 	TsAgentBuildExecute(builderId string, workingDir string, program string, args ...string) error
 	TsAgentBuildLog(builderId string, status int, message string) error
 
-	TsAgentConsoleOutput(agentId string, messageType int, message string, clearText string, store bool)
+	TsAgentConsoleOutput(agentId string, client string, messageType int, message string, clearText string, store bool)
 
 	TsPivotCreate(pivotId string, pAgentId string, chAgentId string, pivotName string, isRestore bool) error
 	TsGetPivotInfoByName(pivotName string) (string, string, string)
@@ -1973,10 +1973,10 @@ func (ext *ExtenderAgent) ProcessData(agentData adaptix.AgentData, decryptedData
 
 			if linkType == 1 {
 				task.Message = fmt.Sprintf("----- New SMB pivot agent: [%s]===[%s] -----", agentData.Id, childAgentId)
-				Ts.TsAgentConsoleOutput(childAgentId, adaptix.MESSAGE_SUCCESS, task.Message, "\n", true)
+				Ts.TsAgentConsoleOutput(childAgentId, "", adaptix.MESSAGE_SUCCESS, task.Message, "\n", true)
 			} else if linkType == 2 {
 				task.Message = fmt.Sprintf("----- New TCP pivot agent: [%s]===[%s] -----", agentData.Id, childAgentId)
-				Ts.TsAgentConsoleOutput(childAgentId, adaptix.MESSAGE_SUCCESS, task.Message, "\n", true)
+				Ts.TsAgentConsoleOutput(childAgentId, "", adaptix.MESSAGE_SUCCESS, task.Message, "\n", true)
 			}
 
 		case COMMAND_LS:
@@ -2452,11 +2452,11 @@ func (ext *ExtenderAgent) ProcessData(agentData adaptix.AgentData, decryptedData
 			if pivotType != 0 {
 				_ = Ts.TsPivotDelete(pivotId)
 				if TaskId == 0 {
-					Ts.TsAgentConsoleOutput(parentAgentId, adaptix.MESSAGE_SUCCESS, messageParent, "\n", true)
+					Ts.TsAgentConsoleOutput(parentAgentId, "", adaptix.MESSAGE_SUCCESS, messageParent, "\n", true)
 				} else {
 					task.Message = messageParent
 				}
-				Ts.TsAgentConsoleOutput(childAgentId, adaptix.MESSAGE_SUCCESS, messageChild, "\n", true)
+				Ts.TsAgentConsoleOutput(childAgentId, "", adaptix.MESSAGE_SUCCESS, messageChild, "\n", true)
 			}
 
 		case COMMAND_UPLOAD:

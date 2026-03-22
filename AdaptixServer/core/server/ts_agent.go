@@ -159,7 +159,7 @@ func (ts *Teamserver) TsAgentCommand(agentName string, agentId string, clientNam
 		ts.TsTaskCreate(agentId, cmdline, clientName, taskData)
 
 		if (taskData.Type != adaptix.TASK_TYPE_BROWSER) && (len(messageData.Message) > 0 || len(messageData.Text) > 0) {
-			ts.TsAgentConsoleOutput(agentId, messageData.Status, messageData.Message, messageData.Text, false)
+			ts.TsAgentConsoleOutput(agentId, clientName, messageData.Status, messageData.Message, messageData.Text, false)
 		}
 
 	}
@@ -232,7 +232,7 @@ func (ts *Teamserver) TsAgentGetHostedAll(agentId string, maxDataSize int) ([]by
 
 		if tasksCount > 0 {
 			message := fmt.Sprintf("Agent called server, sent [%v]", tformat.SizeBytesToFormat(uint64(len(respData))))
-			ts.TsAgentConsoleOutput(agentId, CONSOLE_OUT_INFO, message, "", false)
+			ts.TsAgentConsoleOutput(agentId, "", CONSOLE_OUT_INFO, message, "", false)
 		}
 		return respData, nil
 	}
@@ -264,7 +264,7 @@ func (ts *Teamserver) TsAgentGetHostedTasks(agentId string, maxDataSize int) ([]
 
 	if tasksCount > 0 {
 		message := fmt.Sprintf("Agent called server, sent [%v]", tformat.SizeBytesToFormat(uint64(len(respData))))
-		ts.TsAgentConsoleOutput(agentId, CONSOLE_OUT_INFO, message, "", false)
+		ts.TsAgentConsoleOutput(agentId, "", CONSOLE_OUT_INFO, message, "", false)
 	}
 
 	return respData, nil
@@ -291,7 +291,7 @@ func (ts *Teamserver) TsAgentGetHostedTasksCount(agentId string, count int, maxD
 		}
 
 		message := fmt.Sprintf("Agent called server, sent [%v]", tformat.SizeBytesToFormat(uint64(len(respData))))
-		ts.TsAgentConsoleOutput(agentId, CONSOLE_OUT_INFO, message, "", false)
+		ts.TsAgentConsoleOutput(agentId, "", CONSOLE_OUT_INFO, message, "", false)
 
 		return respData, nil
 	}
@@ -898,9 +898,9 @@ func (ts *Teamserver) TsAgentTickUpdate() {
 
 /// Console
 
-func (ts *Teamserver) TsAgentConsoleOutput(agentId string, messageType int, message string, clearText string, store bool) {
+func (ts *Teamserver) TsAgentConsoleOutput(agentId string, client string, messageType int, message string, clearText string, store bool) {
 	packet := CreateSpAgentConsoleOutput(agentId, messageType, message, clearText)
-	ts.TsSyncConsole(packet, "")
+	ts.TsSyncConsole(packet, "", client)
 
 	if store {
 		_ = ts.DBMS.DbConsoleInsert(agentId, packet)
@@ -909,15 +909,15 @@ func (ts *Teamserver) TsAgentConsoleOutput(agentId string, messageType int, mess
 
 func (ts *Teamserver) TsAgentConsoleOutputClient(agentId string, client string, messageType int, message string, clearText string) {
 	packet := CreateSpAgentConsoleOutput(agentId, messageType, message, clearText)
-	ts.TsSyncConsole(packet, client)
+	ts.TsSyncConsole(packet, client, client)
 }
 
 func (ts *Teamserver) TsAgentConsoleErrorCommand(agentId string, client string, cmdline string, message string, HookId string, HandlerId string) {
 	packet := CreateSpAgentErrorCommand(agentId, cmdline, message, HookId, HandlerId)
-	ts.TsSyncConsole(packet, client)
+	ts.TsSyncConsole(packet, client, client)
 }
 
 func (ts *Teamserver) TsAgentConsoleLocalCommand(agentId string, client string, cmdline string, message string, text string) {
 	packet := CreateSpAgentLocalCommand(agentId, cmdline, message, text)
-	ts.TsSyncConsole(packet, client)
+	ts.TsSyncConsole(packet, client, client)
 }

@@ -234,7 +234,7 @@ func (ts *Teamserver) TsAxScriptParseAndExecute(agentId string, username string,
 	}
 
 	if cmdDef.HasPreHook && cmdDef.PreHookFunc != nil && resolved.Engine != nil {
-		preHookErr := ts.ScriptManager.ExecutePreHookPublic(resolved.Engine, cmdDef.PreHookFunc, agentId, cmdline, parsed.Args)
+		preHookErr := ts.ScriptManager.ExecutePreHookPublic(resolved.Engine, cmdDef.PreHookFunc, agentId, cmdline, parsed.Args, username)
 		if preHookErr != nil {
 			ts.TsAgentConsoleOutputClient(agentId, username, CONSOLE_OUT_LOCAL_ERROR, cmdline, std.ExtractJsErrorMessage(preHookErr))
 			return nil
@@ -247,35 +247,35 @@ func (ts *Teamserver) TsAxScriptParseAndExecute(agentId string, username string,
 	handlerId := ""
 
 	if cmdDef.HasPostHook && cmdDef.PostHookFunc != nil && resolved.Engine != nil {
-		hookId = ts.ScriptManager.HookStore.RegisterPostHook(resolved.Engine, cmdDef.PostHookFunc, agentId, "server")
+		hookId = ts.ScriptManager.HookStore.RegisterPostHook(resolved.Engine, cmdDef.PostHookFunc, agentId, username)
 	}
 	if cmdDef.HasHandler && cmdDef.HandlerFunc != nil && resolved.Engine != nil {
-		handlerId = ts.ScriptManager.HookStore.RegisterHandler(resolved.Engine, cmdDef.HandlerFunc, agentId, "server")
+		handlerId = ts.ScriptManager.HookStore.RegisterHandler(resolved.Engine, cmdDef.HandlerFunc, agentId, username)
 	}
 
 	return ts.TsAgentCommand(agentName, agentId, username, hookId, handlerId, cmdline, false, parsed.Args)
 }
 
-func (ts *Teamserver) TsAxScriptResolveHooks(agentName string, agentId string, listenerRegName string, os int, cmdline string, args map[string]interface{}) (string, string, bool, error) {
+func (ts *Teamserver) TsAxScriptResolveHooks(agentName string, agentId string, listenerRegName string, os int, cmdline string, args map[string]interface{}, client string) (string, string, bool, error) {
 	if ts.ScriptManager == nil {
 		return "", "", false, nil
 	}
-	return ts.ScriptManager.ResolveAndExecutePreHook(agentName, agentId, listenerRegName, os, cmdline, args)
+	return ts.ScriptManager.ResolveAndExecutePreHook(agentName, agentId, listenerRegName, os, cmdline, args, client)
 }
 
-func (ts *Teamserver) TsAxScriptExecPostHook(hookId string, data map[string]interface{}) (map[string]interface{}, error) {
+func (ts *Teamserver) TsAxScriptExecPostHook(hookId string, data map[string]interface{}, client string) (map[string]interface{}, error) {
 	if ts.ScriptManager == nil {
 		return data, nil
 	}
-	return ts.ScriptManager.HookStore.ExecutePostHook(hookId, data)
+	return ts.ScriptManager.HookStore.ExecutePostHook(hookId, data, client)
 }
 
 // /---
-func (ts *Teamserver) TsAxScriptExecHandler(handlerId string, data map[string]interface{}) error {
+func (ts *Teamserver) TsAxScriptExecHandler(handlerId string, data map[string]interface{}, client string) error {
 	if ts.ScriptManager == nil {
 		return nil
 	}
-	return ts.ScriptManager.HookStore.ExecuteHandler(handlerId, data)
+	return ts.ScriptManager.HookStore.ExecuteHandler(handlerId, data, client)
 }
 
 func (ts *Teamserver) TsAxScriptRemovePostHook(hookId string) {

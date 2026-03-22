@@ -87,13 +87,13 @@ func (hs *HookStore) RemoveHandler(handlerId string) {
 	delete(hs.pendingHandlers, handlerId)
 }
 
-func (hs *HookStore) ExecutePostHook(hookId string, data map[string]interface{}) (map[string]interface{}, error) {
+func (hs *HookStore) ExecutePostHook(hookId string, data map[string]interface{}, client string) (map[string]interface{}, error) {
 	hook := hs.GetPostHook(hookId)
 	if hook == nil {
 		return data, nil
 	}
 
-	result, err := hook.Engine.CallCallable(hook.Func, hook.Engine.ToValue(data))
+	result, err := hook.Engine.CallCallableAs(client, hook.Func, hook.Engine.ToValue(data))
 	if err != nil {
 		return data, err
 	}
@@ -110,13 +110,13 @@ func (hs *HookStore) ExecutePostHook(hookId string, data map[string]interface{})
 }
 
 // /---
-func (hs *HookStore) ExecuteHandler(handlerId string, data map[string]interface{}) error {
+func (hs *HookStore) ExecuteHandler(handlerId string, data map[string]interface{}, client string) error {
 	hook := hs.GetHandler(handlerId)
 	if hook == nil {
 		return nil
 	}
 
-	_, err := hook.Engine.CallCallable(hook.Func, hook.Engine.ToValue(data))
+	_, err := hook.Engine.CallCallableAs(client, hook.Func, hook.Engine.ToValue(data))
 
 	hs.RemoveHandler(handlerId)
 

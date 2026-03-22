@@ -53,7 +53,7 @@ func (h *JobTaskHandler) updateWithServerHook(tm *TaskManager, agent *Agent, tas
 		"type":      updateData.MessageType,
 		"completed": updateData.Completed,
 	}
-	result, _ := tm.ts.TsAxScriptExecPostHook(task.HookId, hookData)
+	result, _ := tm.ts.TsAxScriptExecPostHook(task.HookId, hookData, task.Client)
 	if result != nil {
 		if msg, ok := result["message"].(string); ok {
 			updateData.Message = msg
@@ -222,7 +222,7 @@ func (h *JobTaskHandler) processReadyJobs(tm *TaskManager, agent *Agent, task *a
 				packet_console_update := CreateSpAgentConsoleTaskUpd(hookJob.Job)
 
 				tm.ts.TsSyncAllClientsWithCategory(packet_task_update, SyncCategoryTasksManager)
-				tm.ts.TsSyncConsole(packet_console_update, hookJob.Job.Client)
+				tm.ts.TsSyncConsole(packet_console_update, hookJob.Job.Client, hookJob.Job.Client)
 
 				_ = tm.ts.DBMS.DbConsoleInsert(task.AgentId, packet_console_update)
 			} else {
@@ -297,7 +297,7 @@ func (h *JobTaskHandler) OnClientDisconnect(tm *TaskManager, agent *Agent, task 
 			packet_console_update := CreateSpAgentConsoleTaskUpd(hookJob.Job)
 
 			tm.ts.TsSyncAllClientsWithCategory(packet_task_update, SyncCategoryTasksManager)
-			tm.ts.TsSyncConsole(packet_console_update, hookJob.Job.Client)
+			tm.ts.TsSyncConsole(packet_console_update, hookJob.Job.Client, hookJob.Job.Client)
 
 			_ = tm.ts.DBMS.DbConsoleInsert(task.AgentId, packet_console_update)
 		}
