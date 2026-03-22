@@ -202,11 +202,13 @@ void DialogListener::AddExListeners(const QList<RegListenerConfig> &listeners, c
 
         configStackWidget->addWidget(ax_ui->widget);
         listenerCombobox->addItem(listener.name);
-        QString type = listener.type + " (" + listener.protocol + ")";
+        QString type = listener.type + " | " + listener.protocol;
         listenersSet.insert(type);
     }
+    QList<QString> sortedTypes(listenersSet.begin(), listenersSet.end());
+    std::sort(sortedTypes.begin(), sortedTypes.end());
     listenerTypeCombobox->addItem("any");
-    listenerTypeCombobox->addItems(QList<QString>(listenersSet.begin(), listenersSet.end()));
+    listenerTypeCombobox->addItems(sortedTypes);
 }
 
 void DialogListener::SetProfile(const AuthProfile &profile)
@@ -249,7 +251,7 @@ void DialogListener::changeType(const QString &type)
 {
     listenerCombobox->clear();
     for (auto listener : listeners) {
-        QString listenerType = listener.type + " (" + listener.protocol + ")";
+        QString listenerType = listener.type + " | " + listener.protocol;
         if (listenerType == type || type == "any")
             listenerCombobox->addItem(listener.name);
     }
@@ -273,6 +275,9 @@ void DialogListener::onButtonCreate()
     QPointer<DialogListener> safeThis = this;
 
     auto callback = [safeThis, isEditMode, configName, configType, configData, profileName, shouldSaveProfile](bool success, const QString &message, const QJsonObject&) {
+        if (!safeThis)
+            return;
+
         if (!success) {
             MessageError(message);
             if (safeThis) {
@@ -280,13 +285,11 @@ void DialogListener::onButtonCreate()
                 safeThis->buttonCreate->setText(isEditMode ? "Edit" : "Create");
             }
         } else {
-            if (safeThis) {
-                if (shouldSaveProfile) {
-                    safeThis->saveProfile(profileName, configName, configType, configData);
-                    safeThis->loadProfiles();
-                }
-                safeThis->close();
+            if (shouldSaveProfile) {
+                safeThis->saveProfile(profileName, configName, configType, configData);
+                safeThis->loadProfiles();
             }
+            safeThis->close();
         }
     };
 
