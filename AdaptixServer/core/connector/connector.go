@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -127,6 +128,9 @@ type Teamserver interface {
 	TsServiceUnload(serviceName string) error
 	TsServiceCall(serviceName string, operator string, function string, args string)
 	TsServiceList() (string, error)
+
+	TsServiceWebProxyUpstreamForName(serviceName string) (base *url.URL, upstreamAuthorization string, prefixRootRedirects bool, bodyRootPrefixes []string, ok bool)
+	TsClientAPIBaseURL() string
 
 	TsAxScriptLoadUser(name string, script string) error
 	TsAxScriptUnloadUser(name string) error
@@ -252,6 +256,9 @@ func NewTsConnector(ts Teamserver, tsProfile profile.TsProfile, httpServer profi
 
 	var connector = new(TsConnector)
 	connector.Engine = gin.New()
+	// Avoid 307 redirects on /path vs /path/ (browsers may drop Authorization on redirect → JWT lost → NoRoute / HTML 404).
+	connector.Engine.RedirectTrailingSlash = false
+	connector.Engine.RedirectFixedPath = false
 	connector.Engine.Use(gin.Recovery())
 	connector.teamserver = ts
 	connector.Interface = tsProfile.Interface
@@ -398,6 +405,9 @@ func NewTsConnector(ts Teamserver, tsProfile profile.TsProfile, httpServer profi
 		//api_group.POST("/service/load", connector.TcServiceLoad)
 		//api_group.POST("/service/unload", connector.TcServiceUnload)
 		api_group.POST("/service/call", connector.TcServiceCall)
+		// Reverse proxy: только один catch-all — Gin 1.12 паникует, если смешать :service/*wild и :service/ (конфликт узлов radix-tree).
+		// RedirectTrailingSlash=false; в TcServiceWebProxy — разбор пути и path.Clean при пустом Param("filepath").
+		api_group.Any("/service/webproxy/*filepath", connector.TcServiceWebProxy)
 
 		//api_group.POST("/axscript/list", connector.TcAxScriptList)
 		//api_group.POST("/axscript/commands", connector.TcAxScriptCommands)

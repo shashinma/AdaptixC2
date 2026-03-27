@@ -265,7 +265,7 @@ func (ts *Teamserver) TsPresyncExtenders() []interface{} {
 
 	ts.service_configs.ForEach(func(key string, value interface{}) bool {
 		serviceInfo := value.(extender.ServiceInfo)
-		p := CreateSpServiceReg(serviceInfo.Name, serviceInfo.AX)
+		p := CreateSpServiceReg(serviceInfo.Name, serviceInfo.AX, serviceInfo.ClientConfigurable, serviceInfo.ClientConfigSchema, serviceInfo.ConfigDefaults)
 		packets = append(packets, p)
 		return true
 	})

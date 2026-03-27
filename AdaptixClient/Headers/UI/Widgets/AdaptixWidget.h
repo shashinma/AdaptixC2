@@ -56,6 +56,13 @@ typedef struct RegAgentConfig {
     bool           valid;
 } RegAgentConfig;
 
+typedef struct RegServiceInfo {
+    QString name;
+    bool    configurable = false;
+    QString configSchema;
+    QString configDefaults; // JSON object from server service_config (sync)
+} RegServiceInfo;
+
 typedef struct AgentTypeInfo {
     bool        multiListeners;
     QStringList listenerTypes;
@@ -154,6 +161,8 @@ public:
 
     QVector<RegListenerConfig>       RegisterListeners;
     QVector<RegAgentConfig>          RegisterAgents;
+    QVector<RegServiceInfo>          RegisterServices;
+    QMap<QString, QJsonObject>       ServiceConfigCache;
     QMap<QString, AgentTypeInfo>     AgentTypes;
     QVector<ListenerData>            Listeners;
     QVector<TunnelData>              Tunnels;
@@ -209,12 +218,16 @@ public:
 
     void RegisterListenerConfig(const QString &name, const QString &protocol, const QString &type, const QString &ax_script);
     void RegisterAgentConfig(const QString &agentName, const QString &ax_script, const QStringList &listenersconst, const bool &multiListeners, const QJsonArray &groups);
-    void RegisterServiceConfig(const QString &serviceName, const QString &ax_script);
+    void RegisterServiceConfig(const QString &serviceName, const QString &ax_script, bool configurable, const QString &configSchema, const QString &configDefaultsJson);
     void ProcessAxScriptPacket(const QString &name, const QString &content, const QJsonArray &groups);
     void registerServerCommandGroups(const QString &scriptName, const QList<ServerScriptGroup> &groups, QJSEngine* engine);
     void EnableServerScript(const QString &name);
     void DisableServerScript(const QString &name);
     QList<ServerScriptInfo> GetServerScripts() const;
+    const QVector<RegServiceInfo>& GetRegisteredServices() const { return RegisterServices; }
+    QJsonObject GetServiceConfigData(const QString &serviceName) const;
+    void        SetServiceConfigData(const QString &serviceName, const QJsonObject &data);
+
     RegListenerConfig GetRegListener(const QString &listenerName);
     QList<QString>    GetAgentNames(const QString &listenerType) const;
     RegAgentConfig    GetRegAgent(const QString &agentName, const QString &listenerName, int os);
@@ -241,8 +254,11 @@ public:
 #ifdef HAS_QT_WEBENGINE
     void LoadBrowserUI(const QString &url = QString(), const QString &proxyHost = QString(), quint16 proxyPort = 0);
     void LoadChromelessWebPanel(const QString& panelId, const QString& title, const QString& url = QString(),
-                                const QString& proxyHost = QString(), quint16 proxyPort = 0, const QString& icon = QString());
+                                const QString& proxyHost = QString(), quint16 proxyPort = 0, const QString& icon = QString(),
+                                bool attachTeamserverBearer = false);
     void CloseChromelessWebPanel(const QString& panelId);
+    void ReloadChromelessWebPanel(const QString& panelId);
+    void FocusChromelessWebPanel(const QString& panelId);
     void applyChromelessWebModulesJson(const QString& jsonPayload);
 #endif
     void ShowTunnelCreator(const QString &AgentId, bool socks4, bool socks5, bool lportfwd, bool rportfwd);

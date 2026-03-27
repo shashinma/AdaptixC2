@@ -123,6 +123,12 @@ func (ts *Teamserver) TsClientSync(username string) {
 	}
 
 	ts.TsNotifyClient(true, username)
+
+	// Presync уже отдал TYPE_REG_SERVICE; TYPE_SERVICE_DATA уходит только подключённым — повторяем push через существующий service/call.
+	ts.service_configs.ForEach(func(key string, _ interface{}) bool {
+		ts.TsServiceCall(key, "", "push", "")
+		return true
+	})
 }
 
 func (ts *Teamserver) TsClientSubscribe(username string, categories []string, consoleTeamMode *bool) {

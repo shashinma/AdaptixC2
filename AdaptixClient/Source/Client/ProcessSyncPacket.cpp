@@ -1,4 +1,7 @@
+#include <QDateTime>
+#include <QJsonParseError>
 #include <Agent/Agent.h>
+#include <Utils/Logs.h>
 #include <Client/AxScript/AxScriptManager.h>
 #include <UI/Widgets/AdaptixWidget.h>
 #include <UI/Widgets/ConsoleWidget.h>
@@ -592,13 +595,35 @@ void AdaptixWidget::processSyncPacket(QJsonObject jsonObj)
         ListenersDock->RemoveListenerItem(jsonObj["l_name"].toString());
         break;
 
-    case TYPE_REG_SERVICE:
-        this->RegisterServiceConfig( jsonObj["service"].toString(), jsonObj["ax"].toString() );
+    case TYPE_REG_SERVICE: {
+        const QString svc = jsonObj["service"].toString();
+        const int axBytes = jsonObj["ax"].toString().size();
+        if (LogsDock)
+            LogsDock->AddLogs(0, QDateTime::currentSecsSinceEpoch(),
+                              QStringLiteral("[sync] TYPE_REG_SERVICE service=%1 ax_bytes=%2").arg(svc).arg(axBytes));
+        LogInfo("[sync] TYPE_REG_SERVICE service=%s ax_bytes=%d", qPrintable(svc), axBytes);
+        const bool configurable = jsonObj[QStringLiteral("configurable")].toBool();
+        const QString configSchema = jsonObj[QStringLiteral("config_schema")].toString();
+        const QString configDefaults = jsonObj[QStringLiteral("config_defaults")].toString();
+        this->RegisterServiceConfig(svc, jsonObj["ax"].toString(), configurable, configSchema, configDefaults);
         break;
+    }
 
-    case TYPE_SERVICE_DATA:
-        ScriptManager->ServiceScriptDataHandler( jsonObj["service"].toString(), jsonObj["data"].toString() );
+    case TYPE_SERVICE_DATA: {
+        const QString svc = jsonObj["service"].toString();
+        const QString dat = jsonObj["data"].toString();
+        if (LogsDock)
+            LogsDock->AddLogs(0, QDateTime::currentSecsSinceEpoch(),
+                              QStringLiteral("[sync] TYPE_SERVICE_DATA service=%1 data_bytes=%2").arg(svc).arg(dat.size()));
+        LogInfo("[sync] TYPE_SERVICE_DATA service=%s data_bytes=%d", qPrintable(svc), dat.size());
+        ScriptManager->ServiceScriptDataHandler(svc, dat);
+
+        QJsonParseError pe;
+        const QJsonDocument jd = QJsonDocument::fromJson(dat.toUtf8(), &pe);
+        if (pe.error == QJsonParseError::NoError && jd.isObject())
+            this->SetServiceConfigData(svc, jd.object());
         break;
+    }
 
     case TYPE_REG_LISTENER:
         this->RegisterListenerConfig( jsonObj["l_name"].toString(), jsonObj["l_protocol"].toString(), jsonObj["l_type"].toString(), jsonObj["ax"].toString() );

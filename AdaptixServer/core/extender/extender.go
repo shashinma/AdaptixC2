@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"plugin"
+	"strings"
 
 	"github.com/Adaptix-Framework/axc2"
 	"github.com/goccy/go-yaml"
@@ -180,6 +181,11 @@ func (ex *AdaptixExtender) LoadPluginService(config_path string, config_data []b
 		return
 	}
 
+	if err := validateServiceClientConfig(configService); err != nil {
+		logs.Error("", "service %s: %s", configService.ServiceName, err.Error())
+		return
+	}
+
 	plugin_path := filepath.Dir(config_path) + "/" + configService.ExtenderFile
 	plug, err := plugin.Open(plugin_path)
 	if err != nil {
@@ -199,14 +205,17 @@ func (ex *AdaptixExtender) LoadPluginService(config_path string, config_data []b
 		return
 	}
 
-	pl_service := pl_InitPlugin(ex.ts, filepath.Dir(plugin_path), configService.ServiceConfig)
+	pl_service := pl_InitPlugin(ex.ts, filepath.Dir(plugin_path), injectServiceName(configService.ServiceName, configService.ServiceConfig))
 	if pl_service == nil {
 		logs.Error("", "plugin %s returned nil", plugin_path)
 		return
 	}
 
 	serviceInfo := ServiceInfo{
-		Name: configService.ServiceName,
+		Name:               configService.ServiceName,
+		ClientConfigurable: configService.ClientConfigurable,
+		ClientConfigSchema: strings.TrimSpace(configService.ClientConfigSchema),
+		ConfigDefaults:     strings.TrimSpace(configService.ServiceConfig),
 	}
 
 	if configService.AxFile != "" {

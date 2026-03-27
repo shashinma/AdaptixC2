@@ -10,6 +10,9 @@
 #include <Client/AxScript/AxScriptManager.h>
 #include <Client/AxScript/AxScriptUtils.h>
 #include <UI/Widgets/AdaptixWidget.h>
+#include <UI/Widgets/LogsWidget.h>
+#include <Utils/Logs.h>
+#include <QDateTime>
 #include <UI/Widgets/ConsoleWidget.h>
 #include <UI/Widgets/CredentialsWidget.h>
 #include <UI/Widgets/TargetsWidget.h>
@@ -1029,7 +1032,7 @@ void BridgeApp::open_embedded_browser(const QString &url, const QString &proxyHo
 }
 
 void BridgeApp::open_web_panel(bool chromeless, const QString& panelId, const QString& title, const QString& url,
-                               const QString& proxyHost, int proxyPort, const QString& icon)
+                               const QString& proxyHost, int proxyPort, const QString& icon, bool attachTeamserverBearer)
 {
 #ifdef HAS_QT_WEBENGINE
     AdaptixWidget* ax = scriptEngine->manager()->GetAdaptix();
@@ -1043,7 +1046,11 @@ void BridgeApp::open_web_panel(bool chromeless, const QString& panelId, const QS
         log_error(QStringLiteral("open_web_panel: chromeless mode requires a non-empty panelId"));
         return;
     }
-    ax->LoadChromelessWebPanel(panelId.trimmed(), title, url, proxyHost, static_cast<quint16>(proxyPort), icon);
+    const QString lid = panelId.trimmed();
+    ax->LoadChromelessWebPanel(lid, title, url, proxyHost, static_cast<quint16>(proxyPort), icon,
+                               attachTeamserverBearer);
+    // Explicitly focus the panel on user-initiated open (LoadChromelessWebPanel only places new panels).
+    ax->FocusChromelessWebPanel(lid);
 #else
     Q_UNUSED(chromeless);
     Q_UNUSED(panelId);
@@ -1058,8 +1065,18 @@ void BridgeApp::open_web_panel(bool chromeless, const QString& panelId, const QS
 void BridgeApp::apply_chromeless_web_modules(const QString& jsonPayload)
 {
 #ifdef HAS_QT_WEBENGINE
-    if (AdaptixWidget* ax = scriptEngine->manager()->GetAdaptix())
+    AdaptixWidget* ax = scriptEngine->manager()->GetAdaptix();
+    const QString pre = QStringLiteral("[chromeless] apply_chromeless_web_modules from script, bytes=%1")
+                            .arg(jsonPayload.size());
+    if (ax && ax->LogsDock)
+        ax->LogsDock->AddLogs(0, QDateTime::currentSecsSinceEpoch(), pre);
+    LogInfo("%s", qPrintable(pre));
+    if (ax)
         ax->applyChromelessWebModulesJson(jsonPayload);
+    else {
+        const QString err = QStringLiteral("[chromeless] no AdaptixWidget — cannot apply modules");
+        LogError("%s", qPrintable(err));
+    }
 #else
     Q_UNUSED(jsonPayload);
 #endif

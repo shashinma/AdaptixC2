@@ -1,5 +1,11 @@
 #include <UI/MainUI.h>
+#include <UI/Widgets/AdaptixWidget.h>
 #include <UI/Dialogs/DialogSettings.h>
+#include <Client/Requestor.h>
+#include <Client/AuthProfile.h>
+#include <Utils/Logs.h>
+#include <QJsonParseError>
+#include <QPointer>
 #include <UI/Widgets/DockWidgetRegister.h>
 #include <MainAdaptix.h>
 #include <Client/Settings.h>
@@ -288,6 +294,34 @@ void DialogSettings::createUI()
 
     tabblinkWidget->setLayout(tabblinkLayout);
 
+    servicesWidget = new QWidget(this);
+    servicesLayout = new QGridLayout(servicesWidget);
+    servicesHintLabel = new QLabel(servicesWidget);
+    servicesHintLabel->setWordWrap(true);
+    servicesComboLabel = new QLabel("Service:", servicesWidget);
+    servicesCombo = new QComboBox(servicesWidget);
+    servicesScroll = new QScrollArea(servicesWidget);
+    servicesScroll->setWidgetResizable(true);
+    servicesScroll->setFrameShape(QFrame::NoFrame);
+    servicesFormHost = new QWidget(servicesScroll);
+    servicesFormLayout = new QFormLayout(servicesFormHost);
+    servicesFormLayout->setContentsMargins(8, 8, 8, 8);
+    servicesScroll->setWidget(servicesFormHost);
+
+    servicesLayout->addWidget(servicesHintLabel, 0, 0, 1, 2);
+    servicesLayout->addWidget(servicesComboLabel, 1, 0);
+    servicesLayout->addWidget(servicesCombo, 1, 1);
+    servicesLayout->addWidget(servicesScroll, 2, 0, 1, 2);
+    servicesLayout->setRowStretch(2, 1);
+    servicesWidget->setLayout(servicesLayout);
+
+    connect(servicesCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
+        if (!m_lastServicesComboService.isEmpty())
+            captureServiceFormDraft(m_lastServicesComboService);
+        m_lastServicesComboService = servicesCombo->currentText();
+        rebuildServiceFormForSelection();
+    });
+
     listSettings = new QListWidget(this);
     listSettings->setFixedWidth(150);
     listSettings->setSpacing(3);
@@ -295,6 +329,7 @@ void DialogSettings::createUI()
     listSettings->addItem("Sessions table");
     listSettings->addItem("Tasks table");
     listSettings->addItem("Blinking tabs");
+    listSettings->addItem("Services");
     listSettings->setCurrentRow(0);
 
     labelHeader = new QLabel(this);
@@ -326,6 +361,7 @@ void DialogSettings::createUI()
     stackSettings->addWidget(sessionsWidget);
     stackSettings->addWidget(tasksWidget);
     stackSettings->addWidget(tabblinkWidget);
+    stackSettings->addWidget(servicesWidget);
 
     layoutMain = new QGridLayout(this);
     layoutMain->setContentsMargins(4, 4, 4, 4);
@@ -347,11 +383,13 @@ void DialogSettings::createUI()
     buttonClose->setFixedHeight(buttonHeight);
 }
 
-void DialogSettings::onStackChange(int index) const
+void DialogSettings::onStackChange(int index)
 {
     QString text = listSettings->item(index)->text();
     labelHeader->setText(text);
     stackSettings->setCurrentIndex(index);
+    if (index == stackSettings->count() - 1)
+        refreshServicesPanel();
 }
 
 void DialogSettings::onHealthChange() const
@@ -372,7 +410,7 @@ void DialogSettings::onBlinkChange() const
     tabblinkGroup->setEnabled(active);
 }
 
-void DialogSettings::onApply() const
+void DialogSettings::onApply()
 {
     buttonApply->setEnabled(false);
 
@@ -448,6 +486,13 @@ void DialogSettings::onApply() const
         settings->data.BlinkWidgets[it.key()] = it.value()->isChecked();
 
     settings->SaveToDB();
+
+    if (m_serviceFormDirty) {
+        if (!tryApplyServiceConfig()) {
+            buttonApply->setEnabled(true);
+            return;
+        }
+    }
 }
 
 void DialogSettings::onClose()
@@ -495,7 +540,380 @@ void DialogSettings::loadSettings()
 void DialogSettings::showEvent(QShowEvent* event)
 {
     loadSettings();
+    refreshServicesPanel();
     QWidget::showEvent(event);
+}
+
+void DialogSettings::refreshServicesPanel()
+{
+    MainAdaptix* ma = settings->getMainAdaptix();
+    MainUI* mainUI = ma ? ma->mainUI : nullptr;
+    AdaptixWidget* aw = mainUI ? mainUI->GetCurrentAdaptixWidget() : nullptr;
+
+    if (aw != m_servicesDraftsAdaptix) {
+        m_serviceFormDrafts.clear();
+        m_servicesDraftsAdaptix = aw;
+    }
+
+    const QString prevSvc = servicesCombo->currentText();
+    if (!prevSvc.isEmpty())
+        captureServiceFormDraft(prevSvc);
+
+    m_serviceFormDirty = false;
+    m_serviceFieldEdits.clear();
+
+    servicesCombo->blockSignals(true);
+    const QString prev = servicesCombo->currentText();
+    servicesCombo->clear();
+
+    if (!aw) {
+        servicesHintLabel->setText(QStringLiteral("Open a project tab to configure teamserver services."));
+        servicesCombo->setEnabled(false);
+        servicesComboLabel->setEnabled(false);
+        servicesScroll->setVisible(false);
+        servicesCombo->blockSignals(false);
+        while (servicesFormLayout->count()) {
+            QLayoutItem* it = servicesFormLayout->takeAt(0);
+            if (QWidget* w = it->widget())
+                delete w;
+            delete it;
+        }
+        return;
+    }
+
+    if (!aw->IsSynchronized()) {
+        servicesHintLabel->setText(QStringLiteral("Wait until the project finishes synchronizing."));
+        servicesCombo->setEnabled(false);
+        servicesComboLabel->setEnabled(false);
+        servicesScroll->setVisible(false);
+        servicesCombo->blockSignals(false);
+        while (servicesFormLayout->count()) {
+            QLayoutItem* it = servicesFormLayout->takeAt(0);
+            if (QWidget* w = it->widget())
+                delete w;
+            delete it;
+        }
+        return;
+    }
+
+    int visibleCount = 0;
+    for (const auto& s : aw->GetRegisteredServices()) {
+        if (s.configurable)
+            ++visibleCount;
+    }
+    if (visibleCount == 0) {
+        servicesHintLabel->setText(
+            QStringLiteral("No services enable client configuration (teamserver extender: client_configurable: true)."));
+        servicesCombo->setEnabled(false);
+        servicesComboLabel->setEnabled(false);
+        servicesScroll->setVisible(false);
+        servicesCombo->blockSignals(false);
+        while (servicesFormLayout->count()) {
+            QLayoutItem* it = servicesFormLayout->takeAt(0);
+            if (QWidget* w = it->widget())
+                delete w;
+            delete it;
+        }
+        return;
+    }
+
+    servicesHintLabel->setText(
+        QStringLiteral("Services registered on the teamserver for the current project tab. Apply posts the form as JSON to /service/call (command=config)."));
+    servicesCombo->setEnabled(true);
+    servicesComboLabel->setEnabled(true);
+    servicesScroll->setVisible(true);
+
+    for (const auto& s : aw->GetRegisteredServices()) {
+        if (s.configurable)
+            servicesCombo->addItem(s.name);
+    }
+
+    if (!prev.isEmpty()) {
+        const int idx = servicesCombo->findText(prev);
+        if (idx >= 0)
+            servicesCombo->setCurrentIndex(idx);
+    }
+
+    servicesCombo->blockSignals(false);
+    rebuildServiceFormForSelection();
+    m_lastServicesComboService = servicesCombo->currentText();
+}
+
+void DialogSettings::captureServiceFormDraft(const QString &serviceName)
+{
+    if (serviceName.isEmpty() || m_serviceFieldEdits.isEmpty())
+        return;
+    QJsonObject o;
+    for (auto it = m_serviceFieldEdits.constBegin(); it != m_serviceFieldEdits.constEnd(); ++it)
+        o[it.key()] = it.value()->text();
+    m_serviceFormDrafts[serviceName] = o;
+}
+
+void DialogSettings::persistServiceDraftField(const QString &serviceName, const QString &key, const QString &value)
+{
+    QJsonObject d = m_serviceFormDrafts.value(serviceName);
+    d[key] = value;
+    m_serviceFormDrafts[serviceName] = d;
+}
+
+QJsonObject DialogSettings::mergeServiceFormValues(const QJsonObject &defaults, const QJsonObject &cached, const QJsonObject &draft)
+{
+    QJsonObject out = defaults;
+    for (auto it = cached.begin(); it != cached.end(); ++it)
+        out[it.key()] = it.value();
+    for (auto it = draft.begin(); it != draft.end(); ++it)
+        out[it.key()] = it.value();
+    return out;
+}
+
+void DialogSettings::rebuildServiceFormForSelection()
+{
+    m_serviceFieldEdits.clear();
+    while (servicesFormLayout->count()) {
+        QLayoutItem* it = servicesFormLayout->takeAt(0);
+        if (QWidget* w = it->widget())
+            delete w;
+        delete it;
+    }
+
+    MainAdaptix* ma = settings->getMainAdaptix();
+    MainUI* mainUI = ma ? ma->mainUI : nullptr;
+    AdaptixWidget* aw = mainUI ? mainUI->GetCurrentAdaptixWidget() : nullptr;
+    if (!aw || !aw->IsSynchronized()) {
+        return;
+    }
+
+    const QString svc = servicesCombo->currentText();
+    if (svc.isEmpty()) {
+        auto* lb = new QLabel(QStringLiteral("No services registered."), servicesFormHost);
+        servicesFormLayout->addRow(lb);
+        return;
+    }
+
+    RegServiceInfo info;
+    bool found = false;
+    for (const auto& s : aw->GetRegisteredServices()) {
+        if (s.name == svc) {
+            info = s;
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        auto* lb = new QLabel(QStringLiteral("Service not found in registration list."), servicesFormHost);
+        servicesFormLayout->addRow(lb);
+        return;
+    }
+
+    if (!info.configurable) {
+        auto* lb = new QLabel(QStringLiteral("This service does not expose client-editable settings."), servicesFormHost);
+        servicesFormLayout->addRow(lb);
+        return;
+    }
+
+    QJsonParseError pe;
+    const QJsonDocument sd = QJsonDocument::fromJson(info.configSchema.toUtf8(), &pe);
+    if (pe.error != QJsonParseError::NoError || !sd.isArray()) {
+        auto* lb = new QLabel(QStringLiteral("Invalid config_schema from teamserver (expected JSON array)."), servicesFormHost);
+        servicesFormLayout->addRow(lb);
+        return;
+    }
+
+    QJsonObject defaultsObj;
+    QJsonParseError pedef;
+    const QJsonDocument defDoc = QJsonDocument::fromJson(info.configDefaults.toUtf8(), &pedef);
+    if (pedef.error == QJsonParseError::NoError && defDoc.isObject())
+        defaultsObj = defDoc.object();
+
+    const QJsonObject cached = aw->GetServiceConfigData(svc);
+    const QJsonObject draft = m_serviceFormDrafts.value(svc);
+    const QJsonObject merged = mergeServiceFormValues(defaultsObj, cached, draft);
+
+    for (const QJsonValue& v : sd.array()) {
+        if (!v.isObject())
+            continue;
+        const QJsonObject fo = v.toObject();
+        const QString key = fo[QStringLiteral("key")].toString();
+        if (key.isEmpty())
+            continue;
+
+        QString label = fo[QStringLiteral("label")].toString();
+        if (label.isEmpty())
+            label = key;
+
+        QString type = fo[QStringLiteral("type")].toString();
+        if (type.isEmpty())
+            type = QStringLiteral("string");
+
+        if (type == QStringLiteral("button")) {
+            const QString cmd = key;
+            auto* btn = new QPushButton(label, servicesFormHost);
+            connect(btn, &QPushButton::clicked, this, [this, cmd]() {
+                triggerServiceAction(cmd);
+            });
+            servicesFormLayout->addRow(btn);
+            continue;
+        }
+
+        auto* le = new QLineEdit(servicesFormHost);
+        if (type == QStringLiteral("secret"))
+            le->setEchoMode(QLineEdit::Password);
+        le->setPlaceholderText(fo[QStringLiteral("placeholder")].toString());
+
+        le->blockSignals(true);
+        if (merged.contains(key)) {
+            const QJsonValue cv = merged[key];
+            if (cv.isString())
+                le->setText(cv.toString());
+            else if (!cv.isNull() && !cv.isUndefined())
+                le->setText(cv.toVariant().toString());
+        }
+        le->blockSignals(false);
+
+        connect(le, &QLineEdit::textChanged, this, [this, svc, key, le](const QString &) {
+            persistServiceDraftField(svc, key, le->text());
+            markServiceFormDirty();
+        });
+        servicesFormLayout->addRow(label, le);
+        m_serviceFieldEdits[key] = le;
+    }
+
+    if (!m_serviceFieldEdits.isEmpty())
+        captureServiceFormDraft(svc);
+
+    if (m_serviceFieldEdits.isEmpty()) {
+        auto* lb = new QLabel(QStringLiteral("Config schema has no fields."), servicesFormHost);
+        servicesFormLayout->addRow(lb);
+    }
+}
+
+void DialogSettings::markServiceFormDirty()
+{
+    m_serviceFormDirty = true;
+    buttonApply->setEnabled(true);
+}
+
+bool DialogSettings::tryApplyServiceConfig()
+{
+    if (!m_serviceFormDirty)
+        return true;
+
+    MainAdaptix* ma = settings->getMainAdaptix();
+    MainUI* mainUI = ma ? ma->mainUI : nullptr;
+    QPointer<AdaptixWidget> aw(mainUI ? mainUI->GetCurrentAdaptixWidget() : nullptr);
+    if (!aw || !aw->IsSynchronized()) {
+        MessageError(QStringLiteral("Connect to a project and wait for sync before applying service settings."));
+        return false;
+    }
+
+    const QString svc = servicesCombo->currentText().trimmed();
+    if (svc.isEmpty()) {
+        m_serviceFormDirty = false;
+        return true;
+    }
+
+    RegServiceInfo info;
+    bool found = false;
+    for (const auto& s : aw->GetRegisteredServices()) {
+        if (s.name == svc) {
+            info = s;
+            found = true;
+            break;
+        }
+    }
+    if (!found || !info.configurable) {
+        m_serviceFormDirty = false;
+        return true;
+    }
+
+    QJsonParseError pe;
+    const QJsonDocument sd = QJsonDocument::fromJson(info.configSchema.toUtf8(), &pe);
+    if (pe.error != QJsonParseError::NoError || !sd.isArray()) {
+        MessageError(QStringLiteral("Invalid service config schema from teamserver."));
+        return false;
+    }
+
+    QJsonObject out;
+    for (const QJsonValue& v : sd.array()) {
+        if (!v.isObject())
+            continue;
+        const QJsonObject fo = v.toObject();
+        const QString key = fo[QStringLiteral("key")].toString();
+        if (key.isEmpty())
+            continue;
+
+        const bool optional = fo[QStringLiteral("optional")].toBool();
+        QLineEdit* le = m_serviceFieldEdits.value(key);
+        if (!le)
+            continue;
+
+        const QString val = le->text().trimmed();
+        if (!optional && val.isEmpty()) {
+            QString fieldLabel = fo[QStringLiteral("label")].toString();
+            if (fieldLabel.isEmpty())
+                fieldLabel = key;
+            MessageError(QStringLiteral("Field \"%1\" is required.").arg(fieldLabel));
+            return false;
+        }
+        out[key] = val;
+    }
+
+    AuthProfile* prof = aw->GetProfile();
+    if (!prof)
+        return false;
+
+    const QByteArray args = QJsonDocument(out).toJson(QJsonDocument::Compact);
+    QPointer<DialogSettings> self(this);
+    HttpReqServiceCallAsync(svc, QStringLiteral("config"), QString::fromUtf8(args), *prof,
+                            [self, aw, svc, out](bool ok, const QString& msg, const QJsonObject&) {
+                                if (!self)
+                                    return;
+                                if (!aw)
+                                    return;
+                                if (ok) {
+                                    aw->SetServiceConfigData(svc, out);
+                                    self->m_serviceFormDrafts.remove(svc);
+                                    self->m_serviceFormDirty = false;
+                                    MessageSuccess(QStringLiteral("Service configuration applied."));
+                                } else {
+                                    MessageError(msg.isEmpty() ? QStringLiteral("Service configuration failed.") : msg);
+                                    self->buttonApply->setEnabled(true);
+                                }
+                            });
+
+    return true;
+}
+
+void DialogSettings::triggerServiceAction(const QString& command)
+{
+    MainAdaptix* ma = settings->getMainAdaptix();
+    MainUI* mainUI = ma ? ma->mainUI : nullptr;
+    QPointer<AdaptixWidget> aw(mainUI ? mainUI->GetCurrentAdaptixWidget() : nullptr);
+    if (!aw || !aw->IsSynchronized()) {
+        MessageError(QStringLiteral("Connect to a project and wait for sync before running service actions."));
+        return;
+    }
+
+    const QString svc = servicesCombo->currentText().trimmed();
+    if (svc.isEmpty())
+        return;
+
+    QJsonObject args;
+    for (auto it = m_serviceFieldEdits.constBegin(); it != m_serviceFieldEdits.constEnd(); ++it)
+        args[it.key()] = it.value()->text().trimmed();
+
+    AuthProfile* prof = aw->GetProfile();
+    if (!prof)
+        return;
+
+    const QByteArray argsData = QJsonDocument(args).toJson(QJsonDocument::Compact);
+    HttpReqServiceCallAsync(svc, command, QString::fromUtf8(argsData), *prof,
+                            [](bool ok, const QString& msg, const QJsonObject&) {
+                                if (ok)
+                                    MessageSuccess(QStringLiteral("Action completed successfully."));
+                                else
+                                    MessageError(msg.isEmpty() ? QStringLiteral("Action failed.") : msg);
+                            });
 }
 
 QString DialogSettings::userAppThemeDir()

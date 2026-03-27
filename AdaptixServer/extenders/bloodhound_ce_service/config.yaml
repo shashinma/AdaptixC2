@@ -1,0 +1,10 @@
+extender_type: "service"
+extender_file: "service_bloodhound_ce.so"
+ax_file: "bloodhound_ce.axs"
+service_name: "bloodhound-ce"
+# upstream_bearer: optional BloodHound CE API token (JSON string value). Proxy strips Adaptix JWT and sends this Bearer to upstream only.
+# upstream_url: с точки зрения процесса teamserver. Если Adaptix и CE оба в Docker с network_mode: host (Linux) — http://127.0.0.1:<порт>.
+# Иначе: имя сервиса в общей сети или см. contrib/bloodhound-ce-host-network.example.yml. Настройка из клиента: Adaptix Settings → Services.
+service_config: '{"upstream_url":"http://127.0.0.1:8080","title":"BloodHound CE","bh_username":"admin","bh_secret":"admin"}'
+client_configurable: true
+client_config_schema: '[{"key":"upstream_url","label":"Upstream URL","type":"string","placeholder":"http://127.0.0.1:8080"},{"key":"public_base_url","label":"Public API base (optional)","type":"string","placeholder":"empty or https://host:4321","optional":true},{"key":"bh_username","label":"BH CE username","type":"string","placeholder":"admin","optional":true},{"key":"bh_secret","label":"BH CE password","type":"secret","placeholder":"admin","optional":true},{"key":"upstream_bearer","label":"CE API token (overrides auto-login)","type":"secret","optional":true},{"key":"title","label":"Panel title","type":"string","optional":true},{"key":"reauth","label":"Re-authenticate now","type":"button","optional":true}]'

@@ -2,13 +2,37 @@ package extender
 
 import (
 	"AdaptixServer/core/utils/logs"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"plugin"
+	"strings"
 
 	"github.com/Adaptix-Framework/axc2"
 	"github.com/goccy/go-yaml"
 )
+
+// injectServiceName ensures service_name from yaml is present in the JSON passed to InitPlugin,
+// so plugins never need to hardcode their own name.
+func injectServiceName(name string, serviceConfig string) string {
+	s := strings.TrimSpace(serviceConfig)
+	if s == "" {
+		s = "{}"
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(s), &m); err != nil {
+		return s
+	}
+	if _, exists := m["service_name"]; !exists {
+		b, _ := json.Marshal(name)
+		m["service_name"] = b
+		out, err := json.Marshal(m)
+		if err == nil {
+			return string(out)
+		}
+	}
+	return s
+}
 
 func (ex *AdaptixExtender) ExServiceLoad(configPath string) error {
 	_, err := os.Stat(configPath)
@@ -31,6 +55,10 @@ func (ex *AdaptixExtender) ExServiceLoad(configPath string) error {
 		return ErrServiceAlreadyLoaded
 	}
 
+	if err := validateServiceClientConfig(configService); err != nil {
+		return err
+	}
+
 	pluginPath := filepath.Dir(configPath) + "/" + configService.ExtenderFile
 	plug, err := plugin.Open(pluginPath)
 	if err != nil {
@@ -47,13 +75,16 @@ func (ex *AdaptixExtender) ExServiceLoad(configPath string) error {
 		return err
 	}
 
-	plService := plInitPlugin(ex.ts, filepath.Dir(pluginPath), configService.ServiceConfig)
+	plService := plInitPlugin(ex.ts, filepath.Dir(pluginPath), injectServiceName(configService.ServiceName, configService.ServiceConfig))
 	if plService == nil {
 		return err
 	}
 
 	serviceInfo := ServiceInfo{
-		Name: configService.ServiceName,
+		Name:               configService.ServiceName,
+		ClientConfigurable: configService.ClientConfigurable,
+		ClientConfigSchema: strings.TrimSpace(configService.ClientConfigSchema),
+		ConfigDefaults:     strings.TrimSpace(configService.ServiceConfig),
 	}
 
 	if configService.AxFile != "" {
@@ -104,4 +135,22 @@ func (ex *AdaptixExtender) ExServiceList() []string {
 		services = append(services, name)
 	}
 	return services
+}
+
+func validateServiceClientConfig(configService ExConfigService) error {
+	if !configService.ClientConfigurable {
+		return nil
+	}
+	s := strings.TrimSpace(configService.ClientConfigSchema)
+	if s == "" {
+		return ErrInvalidClientConfigSchema
+	}
+	var arr []json.RawMessage
+	if err := json.Unmarshal([]byte(s), &arr); err != nil {
+		return ErrInvalidClientConfigSchema
+	}
+	if len(arr) == 0 {
+		return ErrInvalidClientConfigSchema
+	}
+	return nil
 }

@@ -35,6 +35,11 @@ find_package(Qt6
 )
 find_package(Qt6 COMPONENTS WebEngineWidgets QUIET)
 set(HAS_WEBENGINE ${Qt6WebEngineWidgets_FOUND})
+if(HAS_WEBENGINE)
+    message(STATUS "Qt WebEngineWidgets: found — HAS_QT_WEBENGINE (service chromeless / Extensions Docks)")
+else()
+    message(WARNING "Qt WebEngineWidgets: NOT found — service web panels (e.g. BloodHound CE) will not appear in Extensions Docks; install Qt WebEngine and reconfigure")
+endif()
 
 include_directories(
         Headers

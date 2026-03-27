@@ -1,6 +1,7 @@
 #include <QFile>
 #include <QTextStream>
 #include <QRegularExpression>
+#include <QStringList>
 #include <Agent/Agent.h>
 #include <Client/Requestor.h>
 #include <Client/AuthProfile.h>
@@ -11,6 +12,9 @@
 #include <Client/AxScript/AxUiFactory.h>
 #include <Client/AxScript/BridgeEvent.h>
 #include <UI/Widgets/AdaptixWidget.h>
+#include <UI/Widgets/LogsWidget.h>
+#include <Utils/Logs.h>
+#include <QDateTime>
 #include <UI/Widgets/SessionsTableWidget.h>
 #include <UI/Widgets/AxConsoleWidget.h>
 
@@ -55,6 +59,7 @@ void AxScriptManager::Clear()
     for (auto &entry : config_scripts)
         delete entry.engine;
     config_scripts.clear();
+    pending_service_data.clear();
     qDeleteAll(scripts);
     scripts.clear();
     qDeleteAll(server_scripts);
@@ -177,10 +182,29 @@ QJSEngine* AxScriptManager::AgentScriptEngine(const QString &name)
 
 QStringList AxScriptManager::ServiceScriptList() { return configScriptListByType(config_scripts, ConfigScriptType::Service); }
 
+void AxScriptManager::deliverServiceData(const QString &name, const QString &data)
+{
+    if (!config_scripts.contains(name) || config_scripts[name].type != ConfigScriptType::Service)
+        return;
+
+    QJSValue func = config_scripts[name].engine->engine()->globalObject().property("data_handler");
+    if (!func.isCallable()) {
+        const QString msg = QStringLiteral("[service] %1: no callable data_handler in .axs").arg(name);
+        if (adaptixWidget && adaptixWidget->LogsDock)
+            adaptixWidget->LogsDock->AddLogs(0, QDateTime::currentSecsSinceEpoch(), msg);
+        LogError("%s", qPrintable(msg));
+        return;
+    }
+
+    func.call(QJSValueList() << QJSValue(data));
+}
+
 void AxScriptManager::ServiceScriptAdd(const QString &name, const QString &ax_script)
 {
-    if (config_scripts.contains(name))
-        return;
+    if (config_scripts.contains(name)) {
+        delete config_scripts[name].engine;
+        config_scripts.remove(name);
+    }
 
     AxScriptEngine* script = new AxScriptEngine(this, name, this);
     script->execute(ax_script);
@@ -189,6 +213,18 @@ void AxScriptManager::ServiceScriptAdd(const QString &name, const QString &ax_sc
     QJSValue func = script->engine()->globalObject().property("InitService");
     if (func.isCallable())
         func.call();
+
+    if (pending_service_data.contains(name)) {
+        const QStringList batch = pending_service_data.take(name);
+        const QString msg = QStringLiteral("[service] %1: flushed %2 queued TYPE_SERVICE_DATA (arrived before REG)")
+                                .arg(name)
+                                .arg(batch.size());
+        if (adaptixWidget && adaptixWidget->LogsDock)
+            adaptixWidget->LogsDock->AddLogs(0, QDateTime::currentSecsSinceEpoch(), msg);
+        LogInfo("%s", qPrintable(msg));
+        for (const QString &d : batch)
+            deliverServiceData(name, d);
+    }
 }
 
 QJSEngine* AxScriptManager::ServiceScriptEngine(const QString &name)
@@ -200,14 +236,19 @@ QJSEngine* AxScriptManager::ServiceScriptEngine(const QString &name)
 
 void AxScriptManager::ServiceScriptDataHandler(const QString &name, const QString &data)
 {
-    if (!config_scripts.contains(name) || config_scripts[name].type != ConfigScriptType::Service)
+    if (!config_scripts.contains(name) || config_scripts[name].type != ConfigScriptType::Service) {
+        pending_service_data[name].append(data);
+        const QString msg =
+            QStringLiteral("[service] %1: queued SERVICE_DATA (%2 bytes) — script not registered yet")
+                .arg(name)
+                .arg(data.size());
+        if (adaptixWidget && adaptixWidget->LogsDock)
+            adaptixWidget->LogsDock->AddLogs(0, QDateTime::currentSecsSinceEpoch(), msg);
+        LogInfo("%s", qPrintable(msg));
         return;
+    }
 
-    QJSValue func = config_scripts[name].engine->engine()->globalObject().property("data_handler");
-    if (!func.isCallable())
-        return;
-
-    func.call(QJSValueList() << QJSValue(data));
+    deliverServiceData(name, data);
 }
 
 QJSValue AxScriptManager::AgentScriptExecute(const QString &name, const QString &code)

@@ -22,6 +22,9 @@
 
 #include <QWebEngineView>
 #include <QWebEnginePage>
+#include <QWebEngineCertificateError>
+#include <QWebEngineUrlRequestInterceptor>
+#include <QWebEngineUrlRequestInfo>
 #include <QWebEngineHistory>
 #include <QResizeEvent>
 #include <QTimer>
@@ -52,6 +55,100 @@
 #include <QCloseEvent>
 #include <QPointer>
 #include <functional>
+
+namespace AdaptixWebTeamserverUrl {
+
+static int effectivePortForUrl(const QUrl& u)
+{
+    int p = u.port();
+    if (p >= 0)
+        return p;
+    const QString s = u.scheme().toLower();
+    if (s == QStringLiteral("https"))
+        return 443;
+    if (s == QStringLiteral("http"))
+        return 80;
+    return -1;
+}
+
+static bool isLoopbackHost(const QString& host)
+{
+    const QString h = host.toLower();
+    return h == QStringLiteral("localhost") || h == QStringLiteral("127.0.0.1") || h == QStringLiteral("::1");
+}
+
+static bool hostsMatchForTeamserverTls(const QString& profileHost, const QString& requestHost)
+{
+    const QString a = profileHost.toLower();
+    const QString b = requestHost.toLower();
+    if (a == b)
+        return true;
+    return isLoopbackHost(a) && isLoopbackHost(b);
+}
+
+/// True if @p requestUrl targets the same teamserver API origin as @p profile (scheme/host/port/path),
+/// treating localhost / 127.0.0.1 / ::1 as equivalent loopback.
+static bool requestUrlMatchesTeamserverApi(const AuthProfile* profile, const QUrl& requestUrl)
+{
+    if (!profile || !requestUrl.isValid())
+        return false;
+    const QUrl baseUrl(profile->GetURL());
+    if (!baseUrl.isValid())
+        return false;
+    if (baseUrl.scheme().compare(requestUrl.scheme(), Qt::CaseInsensitive) != 0)
+        return false;
+    if (effectivePortForUrl(baseUrl) != effectivePortForUrl(requestUrl))
+        return false;
+    if (!hostsMatchForTeamserverTls(baseUrl.host(), requestUrl.host()))
+        return false;
+
+    QString basePath = baseUrl.path();
+    while (basePath.size() > 1 && basePath.endsWith(QLatin1Char('/')))
+        basePath.chop(1);
+    const QString reqPath = requestUrl.path();
+    if (basePath.isEmpty() || basePath == QLatin1String("/"))
+        return true;
+    if (!reqPath.startsWith(basePath))
+        return false;
+    if (reqPath.size() > basePath.size()) {
+        const QChar c = reqPath.at(basePath.size());
+        if (c != QLatin1Char('/'))
+            return false;
+    }
+    return true;
+}
+
+} // namespace AdaptixWebTeamserverUrl
+
+#ifdef HAS_QT_WEBENGINE
+class TeamserverBearerRequestInterceptor final : public QWebEngineUrlRequestInterceptor
+{
+public:
+    explicit TeamserverBearerRequestInterceptor(AdaptixWidget* adaptix, QObject* parent = nullptr)
+        : QWebEngineUrlRequestInterceptor(parent)
+        , m_adaptix(adaptix)
+    {
+    }
+
+protected:
+    void interceptRequest(QWebEngineUrlRequestInfo& info) override
+    {
+        if (!m_adaptix || !m_adaptix->GetProfile())
+            return;
+        if (!AdaptixWebTeamserverUrl::requestUrlMatchesTeamserverApi(m_adaptix->GetProfile(), info.requestUrl()))
+            return;
+        const QString token = m_adaptix->GetProfile()->GetAccessToken();
+        if (token.isEmpty())
+            return;
+        // Use X-Adaptix-Auth so the Adaptix JWT does not overwrite the Authorization header
+        // that the embedded page (e.g. BloodHound CE) may set for its own upstream session token.
+        info.setHttpHeader("X-Adaptix-Auth", QByteArrayLiteral("Bearer ") + token.toUtf8());
+    }
+
+private:
+    AdaptixWidget* m_adaptix = nullptr;
+};
+#endif
 
 namespace AdaptixBrowserFloatingDetail {
 
@@ -283,7 +380,8 @@ EmbeddableBrowserOptions EmbeddableBrowserOptions::fullMode(const QString& title
 }
 
 EmbeddableBrowserOptions EmbeddableBrowserOptions::chromelessMode(const QString& logicalId, const QString& title,
-                                                                  const QString& initialUrl, const QString& iconPath)
+                                                                  const QString& initialUrl, const QString& iconPath,
+                                                                  bool attachTeamserverBearer)
 {
     EmbeddableBrowserOptions o;
     o.mode = BrowserChromeMode::Chromeless;
@@ -291,6 +389,7 @@ EmbeddableBrowserOptions EmbeddableBrowserOptions::chromelessMode(const QString&
     o.title = title;
     o.initialUrl = initialUrl;
     o.iconPath = iconPath;
+    o.attachTeamserverBearer = attachTeamserverBearer;
     return o;
 }
 
@@ -309,6 +408,7 @@ EmbeddableBrowserWidget::EmbeddableBrowserWidget(AdaptixWidget* w, const Embedda
     , adaptixWidget(w)
     , m_chromeMode(opt.mode)
     , m_logicalId(opt.logicalId)
+    , m_attachTeamserverBearer(opt.attachTeamserverBearer)
 {
     setAutoBlinkEnabled(false);
 
@@ -366,7 +466,7 @@ void EmbeddableBrowserWidget::createChromelessUI()
     const QString profileId = QStringLiteral("chromeless_%1").arg(m_logicalId);
     browserSharedProfile = new QWebEngineProfile(profileId, this);
     webView = new QWebEngineView(this);
-    auto* page = new QWebEnginePage(browserSharedProfile, webView);
+    auto* page = new BrowserPage(browserSharedProfile, webView, nullptr, this, webView);
     webView->setPage(page);
     webView->setContextMenuPolicy(Qt::DefaultContextMenu);
 
@@ -375,6 +475,38 @@ void EmbeddableBrowserWidget::createChromelessUI()
     layout->setSpacing(0);
     layout->addWidget(webView);
     connectViewSignals(webView);
+    syncTeamserverBearerInterceptor();
+}
+
+void EmbeddableBrowserWidget::syncTeamserverBearerInterceptor()
+{
+#ifdef HAS_QT_WEBENGINE
+    if (m_chromeMode != BrowserChromeMode::Chromeless || !browserSharedProfile)
+        return;
+    if (m_attachTeamserverBearer) {
+        if (!adaptixWidget || !adaptixWidget->GetProfile())
+            return;
+        if (!m_tsBearerInterceptor)
+            m_tsBearerInterceptor = new TeamserverBearerRequestInterceptor(adaptixWidget, this);
+        browserSharedProfile->setUrlRequestInterceptor(m_tsBearerInterceptor);
+    } else {
+        browserSharedProfile->setUrlRequestInterceptor(nullptr);
+        if (m_tsBearerInterceptor) {
+            m_tsBearerInterceptor->deleteLater();
+            m_tsBearerInterceptor = nullptr;
+        }
+    }
+#endif
+}
+
+void EmbeddableBrowserWidget::setAttachTeamserverBearer(bool on)
+{
+    if (m_attachTeamserverBearer == on)
+        return;
+    m_attachTeamserverBearer = on;
+#ifdef HAS_QT_WEBENGINE
+    syncTeamserverBearerInterceptor();
+#endif
 }
 
 EmbeddableBrowserWidget::~EmbeddableBrowserWidget()
@@ -397,6 +529,23 @@ BrowserPage::BrowserPage(QWebEngineProfile* profile, QWebEngineView* view,
     , m_devToolsPage(devToolsPage)
     , m_browserWidget(browserWidget)
 {
+    // certificateError is a signal (Qt 6.8+). Accept TLS for the current teamserver API origin only
+    // (localhost vs 127.0.0.1 must match — GetURL() often uses one, WebEngine the other).
+    connect(
+        this,
+        &QWebEnginePage::certificateError,
+        this,
+        [this](QWebEngineCertificateError error) {
+            if (!m_browserWidget || !m_browserWidget->adaptixWidget || !m_browserWidget->adaptixWidget->GetProfile())
+                return;
+            if (!error.isOverridable())
+                return;
+            AuthProfile* prof = m_browserWidget->adaptixWidget->GetProfile();
+            if (!AdaptixWebTeamserverUrl::requestUrlMatchesTeamserverApi(prof, error.url()))
+                return;
+            error.acceptCertificate();
+        },
+        Qt::DirectConnection);
 }
 
 QWebEnginePage* BrowserPage::createWindow(QWebEnginePage::WebWindowType type)
@@ -438,6 +587,15 @@ bool BrowserPage::acceptNavigationRequest(const QUrl& url, QWebEnginePage::Navig
     }
 
     return QWebEnginePage::acceptNavigationRequest(url, type, isMainFrame);
+}
+
+void BrowserPage::javaScriptConsoleMessage(JavaScriptConsoleMessageLevel level, const QString& message,
+                                           int lineNumber, const QString& sourceID)
+{
+    const char* tag = (level == QWebEnginePage::ErrorMessageLevel)      ? "ERROR"
+                    : (level == QWebEnginePage::WarningMessageLevel)    ? "WARN"
+                                                                       : "INFO";
+    LogInfo("[WebEngine::%s] %s (line %d, source: %s)", tag, qPrintable(message), lineNumber, qPrintable(sourceID));
 }
 
 void EmbeddableBrowserWidget::createFullUI()
@@ -1045,6 +1203,22 @@ void EmbeddableBrowserWidget::loadUrl(const QUrl& url)
 void EmbeddableBrowserWidget::loadUrl(const QString& url)
 {
     loadUrl(urlFromUserInput(url));
+}
+
+void EmbeddableBrowserWidget::forceLoadUrl(const QString& url)
+{
+    const QUrl qurl = urlFromUserInput(url);
+    if (!qurl.isValid() || qurl.isEmpty())
+        return;
+    applyProxy();
+    if (QWebEngineView* v = currentWebView())
+        v->load(qurl);
+}
+
+void EmbeddableBrowserWidget::reload()
+{
+    if (QWebEngineView* v = currentWebView())
+        v->reload();
 }
 
 void EmbeddableBrowserWidget::setProxy(QNetworkProxy::ProxyType type, const QString& host, quint16 port)

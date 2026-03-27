@@ -1,0 +1,23 @@
+# Пример: BloodHound CE в network_mode: host (рядом с Adaptix runtime, тоже host — Linux).
+#
+# 1) Скопируйте в каталог вашего BloodHound CE compose и подключите вторым файлом:
+#    docker compose -f docker-compose.yml -f bloodhound-ce-host-network.example.yml up -d
+#    (переименуйте при необходимости; не коммитьте секреты.)
+#
+# 2) Замените имена сервисов на те, что в вашем docker-compose.yml (см. `docker compose config --services`).
+#
+# У multi-service стека CE все контейнеры, которые должны общаться по имени сервиса, либо переходят на host
+# (и тогда связи через 127.0.0.1 и порты на хосте), либо остаются в одной bridge-сети без host.
+# Только веб-сервис на host, а БД в bridge — обычно ломает стандартный compose CE; проще весь стек на host
+# или оставить CE в bridge и не использовать host.
+#
+# На Docker Desktop для Mac/Windows network_mode: host ведёт себя иначе, чем на Linux.
+
+services:
+  # TODO: переименуйте под ваш compose — часто это сервис с веб-UI CE
+  bloodhound:
+    network_mode: host
+
+  # Если в вашем файле есть отдельные сервисы (БД и т.д.) и вы переводите ВЕСЬ стек на host:
+  # neo4j:
+  #   network_mode: host

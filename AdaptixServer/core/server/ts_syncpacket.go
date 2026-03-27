@@ -737,12 +737,15 @@ func CreateSpTunnelDelete(tunnelData adaptix.TunnelData) SyncPackerTunnelDelete 
 
 /// SERVICE
 
-func CreateSpServiceReg(name string, ax string) SyncPackerServiceReg {
+func CreateSpServiceReg(name string, ax string, configurable bool, configSchema string, configDefaults string) SyncPackerServiceReg {
 	return SyncPackerServiceReg{
 		SpType: TYPE_SERVICE_REG,
 
-		Name: name,
-		AX:   ax,
+		Name:           name,
+		AX:             ax,
+		Configurable:   configurable,
+		ConfigSchema:   configSchema,
+		ConfigDefaults: configDefaults,
 	}
 }
 

@@ -174,6 +174,11 @@ AuthProfile* MainUI::GetCurrentProfile() const
     return adaptixWidget->GetProfile();
 }
 
+AdaptixWidget* MainUI::GetCurrentAdaptixWidget() const
+{
+    return qobject_cast<AdaptixWidget*>(mainuiTabWidget->currentWidget());
+}
+
 QVector<AdaptixWidget*> MainUI::GetAdaptixProjects() const
 {
     return AdaptixProjects;

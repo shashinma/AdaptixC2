@@ -3,8 +3,11 @@
 
 #include <main.h>
 #include <oclero/qlementine/widgets/Switch.hpp>
+#include <QFormLayout>
+#include <QScrollArea>
 
 class Settings;
+class AdaptixWidget;
 
 class DialogSettings : public QWidget
 {
@@ -74,10 +77,32 @@ Q_OBJECT
     QGridLayout* tabblinkGroupLayout     = nullptr;
     QMap<QString, QCheckBox*> m_tabblinkChecks;  // className -> checkbox
 
+    QWidget*     servicesWidget       = nullptr;
+    QGridLayout* servicesLayout       = nullptr;
+    QLabel*      servicesHintLabel    = nullptr;
+    QLabel*      servicesComboLabel   = nullptr;
+    QComboBox*   servicesCombo        = nullptr;
+    QScrollArea* servicesScroll       = nullptr;
+    QWidget*     servicesFormHost     = nullptr;
+    QFormLayout* servicesFormLayout   = nullptr;
+    QMap<QString, QLineEdit*> m_serviceFieldEdits;
+    bool         m_serviceFormDirty   = false;
+    QMap<QString, QJsonObject> m_serviceFormDrafts;
+    QString      m_lastServicesComboService;
+    AdaptixWidget* m_servicesDraftsAdaptix = nullptr;
+
+    void captureServiceFormDraft(const QString &serviceName);
+    void persistServiceDraftField(const QString &serviceName, const QString &key, const QString &value);
+    static QJsonObject mergeServiceFormValues(const QJsonObject &defaults, const QJsonObject &cached, const QJsonObject &draft);
+    void triggerServiceAction(const QString& command);
+
     void createUI();
     void loadSettings();
     void refreshAppThemeCombo();
     void refreshConsoleThemeCombo();
+    void refreshServicesPanel();
+    void rebuildServiceFormForSelection();
+    bool tryApplyServiceConfig();
 
     static QString userAppThemeDir();
     static bool importAppTheme(const QString& filePath);
@@ -89,11 +114,14 @@ public:
     DialogSettings(Settings* s);
 
 public Q_SLOTS:
-    void onStackChange(int index) const;
+    void onStackChange(int index);
     void onHealthChange() const;
     void onBlinkChange() const;
-    void onApply() const;
+    void onApply();
     void onClose();
+
+private Q_SLOTS:
+    void markServiceFormDirty();
 };
 
 #endif

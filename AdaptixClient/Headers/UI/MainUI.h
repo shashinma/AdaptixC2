@@ -49,6 +49,7 @@ public:
     void UpdateTasksTableColumns();
 
     AuthProfile* GetCurrentProfile() const;
+    AdaptixWidget* GetCurrentAdaptixWidget() const;
     QVector<AdaptixWidget*> GetAdaptixProjects() const;
 
     QMenu* getMenuProject() const;

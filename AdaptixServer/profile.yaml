@@ -2,6 +2,9 @@ Teamserver:
   interface: "0.0.0.0"
   port: 4321
   endpoint: "/endpoint"
+  # BloodHound CE: при пустом — https://127.0.0.1:{port}{endpoint}. За NAT: client_api_base_url с хостом, с которого браузер достучится до API.
+  # Достаточно https://c2.example.com:4321 — к URL автоматически добавится endpoint (например /endpoint), иначе панель откроет .../service/webproxy/... без префикса → 404 Adaptix.
+#  client_api_base_url: "https://c2.example.com:4321"
   password: "pass"
   only_password: true
   operators:
@@ -17,6 +20,8 @@ Teamserver:
     - "extenders/beacon_agent/config.yaml"
     - "extenders/gopher_listener_tcp/config.yaml"
     - "extenders/gopher_agent/config.yaml"
+    # BloodHound CE: только через teamserver proxy; нужны client_api_base_url и upstream_url в service extender.
+    - "extenders/bloodhound_ce_service/config.yaml"
   axscripts:
 #    - "Extension-Kit/extension-kit.axs"
   access_token_live_hours: 12

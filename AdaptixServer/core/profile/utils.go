@@ -9,6 +9,7 @@ type TsProfile struct {
 	Interface      string            `yaml:"interface"`
 	Port           int               `yaml:"port"`
 	Endpoint       string            `yaml:"endpoint"`
+	ClientApiBaseURL string `yaml:"client_api_base_url"`
 	Password       string            `yaml:"password"`
 	ManagePassword string            `yaml:"manage_password"`
 	OnlyPassword   bool              `yaml:"only_password"`

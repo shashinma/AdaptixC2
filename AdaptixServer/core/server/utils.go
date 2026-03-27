@@ -62,6 +62,9 @@ type Teamserver struct {
 	pivots        *safe.Slice // 			           : PivotData
 	OTPManager    *token.OTPManager
 	builders      safe.Map // buildId string      : build Build
+
+	serviceWebProxyMu          sync.RWMutex
+	serviceWebProxyUpstreams   map[string]ServiceWebProxyUpstream // service name -> upstream (server-side only)
 }
 
 type Agent struct {
@@ -294,8 +297,11 @@ type SyncPackerAgentReg struct {
 type SyncPackerServiceReg struct {
 	SpType int `json:"type"`
 
-	Name string `json:"service"`
-	AX   string `json:"ax"`
+	Name                   string `json:"service"`
+	AX                     string `json:"ax"`
+	Configurable           bool   `json:"configurable,omitempty"`
+	ConfigSchema           string `json:"config_schema,omitempty"`
+	ConfigDefaults string `json:"config_defaults,omitempty"` // JSON object; yaml service_config
 }
 
 type SyncPackerServiceData struct {

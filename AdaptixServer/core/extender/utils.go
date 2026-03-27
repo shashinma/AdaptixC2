@@ -7,10 +7,11 @@ import (
 )
 
 var (
-	ErrModuleNotFound       = errors.New("module not found")
-	ErrListenerNotFound     = errors.New("listener not found")
-	ErrServiceNotFound      = errors.New("service not found")
-	ErrServiceAlreadyLoaded = errors.New("service already loaded")
+	ErrModuleNotFound            = errors.New("module not found")
+	ErrListenerNotFound          = errors.New("listener not found")
+	ErrServiceNotFound           = errors.New("service not found")
+	ErrServiceAlreadyLoaded      = errors.New("service already loaded")
+	ErrInvalidClientConfigSchema = errors.New("client_config_schema must be a non-empty JSON array when client_configurable is true")
 )
 
 /// ExConfig Listener
@@ -44,6 +45,9 @@ type ExConfigService struct {
 	AxFile        string `yaml:"ax_file"`
 	ServiceName   string `yaml:"service_name"`
 	ServiceConfig string `yaml:"service_config"`
+	// ClientConfigurable: Adaptix Client lists the service under Settings → Services and shows a form driven by ClientConfigSchema (JSON array).
+	ClientConfigurable bool `yaml:"client_configurable"`
+	ClientConfigSchema string `yaml:"client_config_schema"`
 }
 
 /// Info
@@ -64,8 +68,12 @@ type AgentInfo struct {
 }
 
 type ServiceInfo struct {
-	Name string
-	AX   string
+	Name                 string
+	AX                   string
+	ClientConfigurable   bool
+	ClientConfigSchema   string // JSON array of field descriptors for the client UI
+	// ConfigDefaults: JSON object from yaml service_config; client merges into form when cache/draft lack keys.
+	ConfigDefaults string
 }
 
 /// Plugin Interfaces
@@ -76,6 +84,10 @@ type Teamserver interface {
 	TsAgentReg(agentInfo AgentInfo) error
 	TsServiceReg(serviceInfo ServiceInfo) error
 	TsServiceUnreg(serviceName string) error
+
+	TsServiceWebProxyRegister(serviceName string, upstreamURL string, upstreamAuthorization string, rewriteConfigJSON string) error
+	TsServiceWebProxyUnregister(serviceName string)
+	TsClientAPIBaseURL() string
 
 	TsExtenderDataSave(extenderName string, key string, value []byte) error
 	TsExtenderDataLoad(extenderName string, key string) ([]byte, error)

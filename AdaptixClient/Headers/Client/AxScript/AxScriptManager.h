@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QMenu>
 #include <QJSValue>
+#include <QStringList>
 #include <Agent/Commander.h>
 #include <main.h>
 
@@ -71,6 +72,10 @@ Q_OBJECT
     QMap<QString, ConfigScriptEntry> config_scripts;
     QMap<QString, AxScriptEngine*>   server_scripts;
     QMap<QString, ServerScriptData>  server_scripts_data;
+    /// SERVICE_DATA may arrive before TYPE_REG_SERVICE during sync; buffer until ServiceScriptAdd runs.
+    QMap<QString, QStringList>         pending_service_data;
+
+    void deliverServiceData(const QString &name, const QString &data);
 
 public:
     AxScriptManager(AdaptixWidget* main_widget, QObject *parent = nullptr);

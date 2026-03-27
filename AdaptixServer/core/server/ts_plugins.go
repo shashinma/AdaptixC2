@@ -85,6 +85,7 @@ func (ts *Teamserver) TsServiceUnreg(serviceName string) error {
 		return fmt.Errorf("service %v not found", serviceName)
 	}
 
+	ts.TsServiceWebProxyUnregister(serviceName)
 	ts.service_configs.Delete(serviceName)
 
 	return nil

@@ -76,7 +76,13 @@ func GenerateRefreshToken(username string, version string) (string, error) {
 
 func ValidateAccessToken() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		tokenString := ctx.GetHeader("Authorization")
+		// For webproxy routes the browser page sends its own Authorization to the upstream service.
+		// The Qt interceptor uses X-Adaptix-Auth to carry the Adaptix JWT without overwriting Authorization.
+		// Fall back to Authorization for all other routes and non-webproxy clients.
+		tokenString := ctx.GetHeader("X-Adaptix-Auth")
+		if tokenString == "" {
+			tokenString = ctx.GetHeader("Authorization")
+		}
 		if tokenString == "" {
 			_ = ctx.Error(errors.New("authorization token required"))
 			return

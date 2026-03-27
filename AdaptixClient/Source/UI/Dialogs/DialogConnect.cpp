@@ -72,8 +72,8 @@ DialogConnect::~DialogConnect() = default;
 
 void DialogConnect::createUI()
 {
-    resize(720, 420);
-    setFixedSize(720, 420);
+    resize(720, 468);
+    setFixedSize(720, 468);
     setWindowTitle("Connect");
     setProperty("Main", "base");
 
@@ -675,7 +675,6 @@ void DialogConnect::onButton_Save()
     json["username"] = lineEdit_User->text().trimmed();
     json["password"] = lineEdit_Password->text();
     json["projectDir"] = projectDir;
-
     QString baseDir = QDir::homePath();
     QString projectDirText = lineEdit_ProjectDir->text().trimmed();
     if (!projectDirText.isEmpty())

@@ -30,6 +30,8 @@ class AdaptixWidget;
 
 class EmbeddableBrowserWidget;
 
+class QWebEngineUrlRequestInterceptor;
+
 enum class BrowserChromeMode {
     Full,
     Chromeless
@@ -41,10 +43,13 @@ struct EmbeddableBrowserOptions {
     QString           initialUrl;
     QString           logicalId;
     QString           iconPath;
+    /// When true (chromeless), WebEngine adds Authorization: Bearer for requests under the current Adaptix API base URL.
+    bool              attachTeamserverBearer = false;
 
     static EmbeddableBrowserOptions fullMode(const QString& title = QString(), const QString& initialUrl = QString());
     static EmbeddableBrowserOptions chromelessMode(const QString& logicalId, const QString& title,
-                                                   const QString& initialUrl = QString(), const QString& iconPath = QString());
+                                                   const QString& initialUrl = QString(), const QString& iconPath = QString(),
+                                                   bool attachTeamserverBearer = false);
 };
 
 class BrowserPage : public QWebEnginePage
@@ -59,6 +64,8 @@ public:
 protected:
     QWebEnginePage* createWindow(QWebEnginePage::WebWindowType type) override;
     bool acceptNavigationRequest(const QUrl& url, QWebEnginePage::NavigationType type, bool isMainFrame) override;
+    void javaScriptConsoleMessage(JavaScriptConsoleMessageLevel level, const QString& message,
+                                 int lineNumber, const QString& sourceID) override;
 
 private:
     QWebEngineView* m_view = nullptr;
@@ -75,6 +82,8 @@ Q_OBJECT
     AdaptixWidget*      adaptixWidget = nullptr;
     BrowserChromeMode   m_chromeMode  = BrowserChromeMode::Full;
     QString             m_logicalId;
+    bool                m_attachTeamserverBearer = false;
+    QWebEngineUrlRequestInterceptor* m_tsBearerInterceptor = nullptr;
 
     bool isFullBrowserChrome() const { return m_chromeMode == BrowserChromeMode::Full; }
 
@@ -120,6 +129,7 @@ Q_OBJECT
 
     void createFullUI();
     void createChromelessUI();
+    void syncTeamserverBearerInterceptor();
     void applyProxy();
     void clearProxy();
     QUrl urlFromUserInput(const QString& input) const;
@@ -163,8 +173,14 @@ public:
 
     void loadUrl(const QUrl& url);
     void loadUrl(const QString& url);
+    /// Like loadUrl but always initiates a fresh navigation (uses load() not setUrl()),
+    /// so the page is re-fetched even if the URL hasn't changed.
+    void forceLoadUrl(const QString& url);
+    void reload();
 
     void setProxy(QNetworkProxy::ProxyType type, const QString& host, quint16 port);
+
+    void setAttachTeamserverBearer(bool on);
 
     static EmbeddableBrowserWidget* create(AdaptixWidget* w, const QString& title, const QString& url, const QString& proxyHost = QString(), quint16 proxyPort = 0);
 
