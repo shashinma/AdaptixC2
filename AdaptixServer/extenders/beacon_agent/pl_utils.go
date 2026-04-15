@@ -279,7 +279,7 @@ func formatBurstStatus(enabled int, sleepMs int, jitterPct int) string {
 	return fmt.Sprintf("on (sleep=%dms, jitter=%d%%)", sleepMs, jitterPct)
 }
 
-func buildDNSProfileParams(generateConfig GenerateConfig, listenerMap map[string]any, userAgent string) ([]interface{}, error) {
+func buildDNSProfileParams(params []interface{}, generateConfig GenerateConfig, listenerMap map[string]any, userAgent string) ([]interface{}, error) {
 
 	domain, _ := listenerMap["domain"].(string)
 
@@ -336,7 +336,7 @@ func buildDNSProfileParams(generateConfig GenerateConfig, listenerMap map[string
 		burstJitter = 0
 	}
 
-	params := []interface{}{
+	params = append(params,
 		domain,
 		resolvers,
 		dohResolvers,
@@ -347,9 +347,9 @@ func buildDNSProfileParams(generateConfig GenerateConfig, listenerMap map[string
 		burstEnabled,
 		burstSleep,
 		burstJitter,
-		dnsMode, // DNS mode (0=UDP, 1=DoH, 2=UDP->DoH, 3=DoH->UDP)
+		dnsMode,
 		userAgent,
-	}
+	)
 
 	return params, nil
 }

@@ -490,7 +490,7 @@ func (p *PluginAgent) GenerateProfiles(profile adaptix.BuildProfile) ([][]byte, 
 			if userAgent == "" {
 				userAgent = "Mozilla/5.0 (Windows NT 6.2; rv:20.0) Gecko/20121202 Firefox/20.0"
 			}
-			params, err = buildDNSProfileParams(generateConfig, listenerMap, userAgent)
+			params, err = buildDNSProfileParams(params, generateConfig, listenerMap, userAgent)
 			if err != nil {
 				return nil, err
 			}
