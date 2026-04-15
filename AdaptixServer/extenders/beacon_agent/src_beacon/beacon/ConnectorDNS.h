@@ -63,7 +63,7 @@ public:
     static const ULONG kMaxDownloadSize = 4 << 20;  // 4 MB
     static const ULONG kDefaultPktSize = 1024;
     static const ULONG kMaxPktSize = 64000;
-    static const ULONG kMaxSafeFrame = 60;
+    static const ULONG kMaxSafeFrame = 110;
     static const ULONG kDefaultLabelSize = 48;
     static const ULONG kMaxLabelSize = 63;
     static const ULONG kMetaSize = sizeof(DNS_META_V1);

