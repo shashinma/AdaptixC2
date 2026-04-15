@@ -76,9 +76,11 @@ func validConfig(config string) error {
 		return errors.New("domain is required")
 	}
 
-	keyLen := len(conf.EncryptKey)
-	if keyLen < 6 || keyLen > 32 {
-		return errors.New("encrypt_key must be 6-32 characters")
+	if len(conf.EncryptKey) != 32 {
+		return errors.New("encrypt_key must be exactly 32 hex characters (16 bytes)")
+	}
+	if _, err := hex.DecodeString(conf.EncryptKey); err != nil {
+		return errors.New("encrypt_key must be a valid hex string")
 	}
 
 	return nil
@@ -295,7 +297,6 @@ func (t *TransportDNS) handleHB(req *dnsRequest) (needsReset bool, hasPendingTas
 		_ = Ts.TsAgentSetTick(req.sid, t.Name)
 	}
 
-	// Check if this SID needs reset
 	t.mu.Lock()
 	if t.needsReset[req.sid] {
 		needsReset = true
@@ -317,11 +318,23 @@ func (t *TransportDNS) handleHB(req *dnsRequest) (needsReset bool, hasPendingTas
 	df, hasDf := t.downFrags[req.sid]
 	if hasDf && df != nil {
 		df.lastUpdate = time.Now()
-		if df.total > 0 && ackOffset >= df.total && ackTaskNonce == df.taskNonce {
+		delivered := false
+		if df.total > 0 && ackOffset >= df.total {
+			if ackTaskNonce == df.taskNonce || ackTaskNonce == 0 {
+				delivered = true
+			}
+		}
+		if delivered {
 			delete(t.localInflights, req.sid)
 			delete(t.downFrags, req.sid)
 			df = nil
 			hasDf = false
+		}
+	} else if ackOffset > 0 {
+		if inf, ok := t.localInflights[req.sid]; ok && inf != nil {
+			if ackTaskNonce == inf.nonce || ackTaskNonce == 0 {
+				delete(t.localInflights, req.sid)
+			}
 		}
 	}
 	t.mu.Unlock()
@@ -366,6 +379,7 @@ func (t *TransportDNS) handleGET(req *dnsRequest, w dns.ResponseWriter) []byte {
 	if df == nil || df.off >= df.total {
 		if df != nil && df.off >= df.total {
 			t.mu.Lock()
+			delete(t.localInflights, req.sid)
 			delete(t.downFrags, req.sid)
 			t.mu.Unlock()
 			df = nil
@@ -479,7 +493,9 @@ func (t *TransportDNS) handlePutFragment(sid string, seq int, data []byte, ack p
 
 	t.mu.Lock()
 
-	if done, exists := t.upDoneCache[sid]; exists && done.total == total {
+	if offset == 0 {
+		delete(t.upDoneCache, sid)
+	} else if done, exists := t.upDoneCache[sid]; exists && done.total == total {
 		ack.complete = true
 		ack.filled = done.total
 		ack.lastReceivedOff = done.total
@@ -726,7 +742,6 @@ func (t *TransportDNS) buildDataResponse(req *dnsRequest, frame []byte, ttl uint
 	}
 }
 
-// Task Fetching (unified for GET and HB)
 func (t *TransportDNS) fetchOrRetryTasks(sid string) ([]byte, uint32) {
 	t.mu.Lock()
 	existingInflight, hasInflight := t.localInflights[sid]
@@ -734,6 +749,7 @@ func (t *TransportDNS) fetchOrRetryTasks(sid string) ([]byte, uint32) {
 
 	if hasInflight && existingInflight != nil {
 		existingInflight.attempts++
+		existingInflight.createdAt = time.Now()
 		return existingInflight.data, existingInflight.nonce
 	}
 
@@ -768,7 +784,7 @@ func (t *TransportDNS) ackDelivery(sid string, ackTaskNonce uint32) {
 		return
 	}
 
-	if ackTaskNonce == df.taskNonce {
+	if ackTaskNonce == df.taskNonce || ackTaskNonce == 0 {
 		delete(t.localInflights, sid)
 		delete(t.downFrags, sid)
 	}
@@ -809,31 +825,31 @@ func (t *TransportDNS) cleanupStaleEntries() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	// Cleanup stale upload fragments
 	for sid, fb := range t.upFrags {
 		if now.Sub(fb.lastUpdate) > staleTimeout {
 			delete(t.upFrags, sid)
 		}
 	}
 
-	// Cleanup stale download buffers
 	for sid, db := range t.downFrags {
 		if now.Sub(db.lastUpdate) > downTimeout {
+			if _, hasInf := t.localInflights[sid]; !hasInf {
+				t.localInflights[sid] = newInflight(db.buf, db.taskNonce)
+			}
 			delete(t.downFrags, sid)
 		}
 	}
 
-	// Cleanup expired dedup cache
 	for sid, done := range t.upDoneCache {
 		if now.Sub(done.doneAt) > dedupTimeout {
 			delete(t.upDoneCache, sid)
 		}
 	}
 
-	// Cleanup stale inflights
-	for sid, inf := range t.localInflights {
-		if now.Sub(inf.createdAt) > inflightTimeout || inf.attempts > maxInflightAttempts {
-			delete(t.localInflights, sid)
+	for _, inf := range t.localInflights {
+		if now.Sub(inf.createdAt) > inflightTimeout {
+			inf.createdAt = now
+			inf.attempts = 0
 		}
 	}
 }
@@ -846,18 +862,17 @@ const (
 	maxUploadSize    = 4 << 20 // 4 MB
 	maxDownloadSize  = 4 << 20 // 4 MB
 	minCompressSize  = 2048
-	dnsSafeChunkSize = 280
+	dnsSafeChunkSize = 480
 	defaultChunkSize = 4096
 	metaV1Size       = 8
 	frameHeaderSize  = 9 // flags:1 + nonce:4 + origLen:4
 
-	staleTimeout        = 5 * time.Minute
-	dedupTimeout        = 5 * time.Minute
-	downTimeout         = 10 * time.Minute
-	inflightTimeout     = 5 * time.Minute
-	maxInflightAttempts = 10
-	cleanupInterval     = 60 * time.Second
-	shutdownTimeout     = 2 * time.Second
+	staleTimeout    = 5 * time.Minute
+	dedupTimeout    = 5 * time.Minute
+	downTimeout     = 10 * time.Minute
+	inflightTimeout = 2 * time.Minute
+	cleanupInterval = 10 * time.Second
+	shutdownTimeout = 2 * time.Second
 )
 
 // Types
