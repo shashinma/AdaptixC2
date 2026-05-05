@@ -2154,6 +2154,126 @@ void EmbeddableBrowserWidget::openBrowserInSeparateWindow()
     updateSeparateWindowButtonCheckedState();
 }
 
+void EmbeddableBrowserWidget::onPermissionRequested(const QWebEnginePermission& permission)
+{
+    permission.deny();
+}
+
+void EmbeddableBrowserWidget::onRenderProcessTerminated(QWebEnginePage::RenderProcessTerminationStatus status, int exitCode)
+{
+    Q_UNUSED(status)
+    Q_UNUSED(exitCode)
+    QWebEnginePage* page = qobject_cast<QWebEnginePage*>(sender());
+    if (page)
+        page->triggerAction(QWebEnginePage::Reload);
+}
+
+void EmbeddableBrowserWidget::onDownloadRequested(QWebEngineDownloadRequest* download)
+{
+    if (download)
+        download->accept();
+}
+
+void EmbeddableBrowserWidget::onLoadingChanged(const QWebEngineLoadingInfo& info)
+{
+    if (info.status() != QWebEngineLoadingInfo::LoadFailedStatus)
+        return;
+    // Skip internal pages (home, about:blank, etc.)
+    if (isInternalHomeUrl(info.url()) || info.url().scheme() == QStringLiteral("about"))
+        return;
+    QWebEnginePage* page = qobject_cast<QWebEnginePage*>(sender());
+    if (!page)
+        return;
+    const QString html = buildErrorPageHtml(info);
+    page->setHtml(html, info.url());
+}
+
+QString EmbeddableBrowserWidget::buildErrorPageHtml(const QWebEngineLoadingInfo& info) const
+{
+    static const QString htmlTemplate = QStringLiteral(R"HTML(
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #1a1a1e; color: #e0e0e0; display: flex; align-items: center; justify-content: center; height: 100vh; }
+.container { text-align: center; max-width: 560px; padding: 40px 20px; }
+.icon { font-size: 56px; margin-bottom: 24px; opacity: 0.8; }
+h1 { font-size: 22px; font-weight: 500; color: #ffffff; margin: 0 0 12px 0; }
+.desc { font-size: 14px; color: #a0a0a0; line-height: 1.5; margin: 0 0 8px 0; }
+.url { font-size: 13px; color: #6c9fff; word-break: break-all; margin: 0 0 24px 0; }
+.code { font-size: 12px; color: #666; margin-bottom: 24px; }
+button { background: #4a9eff; color: white; border: none; padding: 10px 24px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; }
+button:hover { background: #3a8eef; }
+</style>
+</head>
+<body>
+<div class="container">
+<div class="icon">%ICON%</div>
+<h1>%TITLE%</h1>
+<p class="desc">%DESC%</p>
+<p class="url">%URL%</p>
+<p class="code">%CODE%</p>
+<button onclick="location.reload()">%RELOAD%</button>
+</div>
+</body>
+</html>
+)HTML");
+    QString icon, title, desc;
+    switch (info.errorDomain()) {
+    case QWebEngineLoadingInfo::DnsErrorDomain:
+        icon = QStringLiteral("🌐");
+        title = tr("Server not found");
+        desc = tr("The browser could not find the server for this URL.");
+        break;
+    case QWebEngineLoadingInfo::ConnectionErrorDomain:
+        icon = QStringLiteral("🔌");
+        title = tr("Connection error");
+        desc = tr("The connection was refused, timed out, or interrupted.");
+        break;
+    case QWebEngineLoadingInfo::HttpErrorDomain:
+    case QWebEngineLoadingInfo::HttpStatusCodeDomain:
+        icon = QStringLiteral("📄");
+        title = tr("HTTP error");
+        desc = tr("The server returned an error.");
+        break;
+    case QWebEngineLoadingInfo::CertificateErrorDomain:
+        icon = QStringLiteral("🔒");
+        title = tr("Security error");
+        desc = tr("The server's certificate is not trusted.");
+        break;
+    case QWebEngineLoadingInfo::FtpErrorDomain:
+        icon = QStringLiteral("📁");
+        title = tr("FTP error");
+        desc = tr("The FTP server returned an error.");
+        break;
+    case QWebEngineLoadingInfo::InternalErrorDomain:
+        icon = QStringLiteral("⚙️");
+        title = tr("Internal error");
+        desc = tr("An internal error occurred while loading the page.");
+        break;
+    default:
+        icon = QStringLiteral("⚠️");
+        title = tr("Failed to load page");
+        desc = info.errorString();
+        break;
+    }
+    QString codeStr;
+    if (info.errorCode() != 0) {
+        codeStr = QStringLiteral("Error %1: %2").arg(QString::number(info.errorCode()), info.errorString());
+    } else {
+        codeStr = info.errorString();
+    }
+    QString html = htmlTemplate;
+    html.replace(QStringLiteral("%ICON%"), icon);
+    html.replace(QStringLiteral("%TITLE%"), title.toHtmlEscaped());
+    html.replace(QStringLiteral("%DESC%"), desc.toHtmlEscaped());
+    html.replace(QStringLiteral("%URL%"), info.url().toString().toHtmlEscaped());
+    html.replace(QStringLiteral("%CODE%"), codeStr.toHtmlEscaped());
+    html.replace(QStringLiteral("%RELOAD%"), tr("Reload").toHtmlEscaped());
+    return html;
+}
+
 namespace AdaptixBrowserFloatingDetail {
 
 BrowserFloatingHost::BrowserFloatingHost(EmbeddableBrowserWidget* browser, QWidget* parent)

@@ -145,6 +145,7 @@ Q_OBJECT
     void updateProxyButtonCheckedState();
     void updateSeparateWindowButtonCheckedState();
     void clearFloatingWindowReference();
+    QString buildErrorPageHtml(const QWebEngineLoadingInfo& info) const;
     void editBookmarkItem(QListWidgetItem* item);
     void deleteBookmarkListItem(QListWidgetItem* item, bool askConfirm);
     bool eventFilter(QObject* watched, QEvent* event) override;
