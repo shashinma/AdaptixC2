@@ -23,6 +23,49 @@ static inline ULONG ReadLE32(const BYTE* src) {
     return (ULONG)src[0] | ((ULONG)src[1] << 8) | ((ULONG)src[2] << 16) | ((ULONG)src[3] << 24);
 }
 
+static BOOL IsIPv4String(const CHAR* str)
+{
+    int dots = 0;
+    int num = 0;
+    int digits = 0;
+    for (int i = 0; str[i]; i++) {
+        if (str[i] == '.') {
+            if (digits == 0 || num > 255) return FALSE;
+            dots++;
+            num = 0;
+            digits = 0;
+        }
+        else if (str[i] >= '0' && str[i] <= '9') {
+            num = num * 10 + (str[i] - '0');
+            digits++;
+            if (digits > 3) return FALSE;
+        }
+        else {
+            return FALSE;
+        }
+    }
+    return dots == 3 && digits > 0 && num <= 255;
+}
+
+static ULONG StrToIPv4(const CHAR* str)
+{
+    ULONG ip = 0;
+    int octet = 0;
+    int shift = 24;
+    for (int i = 0; str[i]; i++) {
+        if (str[i] == '.') {
+            ip |= ((ULONG)(octet & 0xFF) << shift);
+            shift -= 8;
+            octet = 0;
+        }
+        else {
+            octet = octet * 10 + (str[i] - '0');
+        }
+    }
+    ip |= ((ULONG)(octet & 0xFF) << shift);
+    return ip;
+}
+
 static USHORT ParseQtypeCode(const CHAR* qtypeStr) {
     if (!qtypeStr || !qtypeStr[0])
         return 16; // TXT default
@@ -384,7 +427,8 @@ BOOL ConnectorDNS::ParseDnsWireResponse(BYTE* response, ULONG respLen, const CHA
                 }
                 consumed += txtLen;
             }
-            if (txtWritten > 0) {
+            // Accept even empty TXT records (all strings have length 0)
+            if (consumed == rdlen) {
                 *outSize = txtWritten;
                 return TRUE;
             }
@@ -475,22 +519,13 @@ BOOL ConnectorDNS::QueryDoH(const CHAR* qname, const DohResolverInfo* resolver, 
                 BYTE respBuf[4096];
                 DWORD totalRead = 0;
                 DWORD bytesRead = 0;
-                DWORD bytesAvailable = 0;
 
-                while (this->dohFunctions->InternetQueryDataAvailable(hRequest, &bytesAvailable, 0, 0) && bytesAvailable > 0) {
-                    if (totalRead + bytesAvailable > sizeof(respBuf))
-                        bytesAvailable = sizeof(respBuf) - totalRead;
-                    if (bytesAvailable == 0)
+                while (totalRead < sizeof(respBuf)) {
+                    if (!this->dohFunctions->InternetReadFile(hRequest, respBuf + totalRead, sizeof(respBuf) - totalRead, &bytesRead))
                         break;
-
-                    if (this->dohFunctions->InternetReadFile(hRequest, respBuf + totalRead, bytesAvailable, &bytesRead)) {
-                        totalRead += bytesRead;
-                        if (bytesRead == 0)
-                            break;
-                    }
-                    else {
+                    if (bytesRead == 0)
                         break;
-                    }
+                    totalRead += bytesRead;
                 }
 
                 // Parse DNS response
@@ -643,30 +678,31 @@ void ConnectorDNS::ResetDownload()
 // Reset upload state for retry
 void ConnectorDNS::ResetUploadState()
 {
-    memset(this->confirmedOffsets, 0, sizeof(this->confirmedOffsets));
-    this->confirmedCount = 0;
+    if (this->confirmedBitmap) {
+        MemFreeLocal((LPVOID*)&this->confirmedBitmap, this->confirmedBitmapSize);
+        this->confirmedBitmap = NULL;
+        this->confirmedBitmapSize = 0;
+    }
+    this->uploadTotal = 0;
     this->lastAckNextExpected = 0;
     this->uploadNeedsReset = FALSE;
     this->uploadStartTime = 0;
 }
 
-// Check if offset was confirmed by server
+// Check if offset was confirmed by server (O(1) bitmap lookup)
 BOOL ConnectorDNS::IsOffsetConfirmed(ULONG offset)
 {
-    for (ULONG i = 0; i < this->confirmedCount && i < kMaxTrackedOffsets; i++) {
-        if (this->confirmedOffsets[i] == offset)
-            return TRUE;
-    }
-    return FALSE;
+    if (!this->confirmedBitmap || offset >= this->uploadTotal)
+        return FALSE;
+    return (this->confirmedBitmap[offset >> 3] >> (offset & 7)) & 1;
 }
 
-// Mark offset as confirmed
+// Mark offset as confirmed (O(1) bitmap set)
 void ConnectorDNS::MarkOffsetConfirmed(ULONG offset)
 {
-    if (this->confirmedCount >= kMaxTrackedOffsets)
+    if (!this->confirmedBitmap || offset >= this->uploadTotal)
         return;
-    if (!IsOffsetConfirmed(offset))
-        this->confirmedOffsets[this->confirmedCount++] = offset;
+    this->confirmedBitmap[offset >> 3] |= (1 << (offset & 7));
 }
 
 // Parse PUT ACK response from A record
@@ -708,17 +744,22 @@ BOOL ConnectorDNS::QuerySingle(const CHAR* qname, const CHAR* resolverIP, const 
 
     const CHAR* resolver = resolverIP;
 
-    HOSTENT* he = this->functions->gethostbyname(resolver);
-    if (!he || !he->h_addr_list || !he->h_addr_list[0]) {
-        ReleaseSocket(s, TRUE);  // Force close on error
-        return FALSE;
-    }
-
     sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = _htons(53);
-    memcpy(&addr.sin_addr, he->h_addr_list[0], he->h_length);
+
+    if (IsIPv4String(resolver)) {
+        addr.sin_addr.S_un.S_addr = StrToIPv4(resolver);
+    }
+    else {
+        HOSTENT* he = this->functions->gethostbyname(resolver);
+        if (!he || !he->h_addr_list || !he->h_addr_list[0]) {
+            ReleaseSocket(s, TRUE);  // Force close on error
+            return FALSE;
+        }
+        memcpy(&addr.sin_addr, he->h_addr_list[0], he->h_length);
+    }
 
     BYTE* query = this->queryBuffer;
     ULONG queryBufSize = kQueryBufferSize;
@@ -865,6 +906,11 @@ void ConnectorDNS::CloseConnector()
         this->pendingUpload = NULL;
         this->pendingUploadSize = 0;
     }
+    if (this->confirmedBitmap && this->confirmedBitmapSize) {
+        MemFreeLocal((LPVOID*)&this->confirmedBitmap, this->confirmedBitmapSize);
+        this->confirmedBitmap = NULL;
+        this->confirmedBitmapSize = 0;
+    }
 }
 
 void ConnectorDNS::Exchange(BYTE* plainData, ULONG plainSize, BYTE* sessionKey)
@@ -924,6 +970,31 @@ void ConnectorDNS::Exchange(BYTE* plainData, ULONG plainSize, BYTE* sessionKey)
         }
     }
     else if (plainData && plainSize > 0) {
+        if (!this->hiSent) {
+            // HI beat is already encrypted with profile.encrypt_key in BuildBeat
+            // Do NOT re-encrypt with sessionKey
+            BYTE* hiBuf = (BYTE*)MemAllocLocal(plainSize);
+            if (!hiBuf) {
+                this->SendData(NULL, 0);
+                return;
+            }
+            memcpy(hiBuf, plainData, plainSize);
+            this->SendData(hiBuf, plainSize);
+
+            if (!this->lastQueryOk) {
+                this->pendingUpload = (BYTE*)MemAllocLocal(plainSize);
+                if (this->pendingUpload) {
+                    memcpy(this->pendingUpload, hiBuf, plainSize);
+                    this->pendingUploadSize = plainSize;
+                    this->uploadBackoffMs = 500;
+                    this->nextUploadAttemptTick = this->functions->GetTickCount() + this->uploadBackoffMs + (this->functions->GetTickCount() & 0x3FF);
+                }
+            }
+
+            MemFreeLocal((LPVOID*)&hiBuf, plainSize);
+            return;
+        }
+
         BYTE* payload = plainData;
         ULONG payloadLen = plainSize;
         BYTE  flags = 0;
@@ -940,42 +1011,53 @@ void ConnectorDNS::Exchange(BYTE* plainData, ULONG plainSize, BYTE* sessionKey)
         }
 
         ULONG sessionLen = 1 + 4 + payloadLen;
-        BYTE* sessionBuf = (BYTE*)MemAllocLocal(sessionLen);
         BYTE* sendBuf = NULL;
         ULONG sendLen = 0;
+        BOOL  sendBufAllocated = FALSE;
 
-        if (sessionBuf) {
-            sessionBuf[0] = flags;
-            sessionBuf[1] = (BYTE)(plainSize & 0xFF);
-            sessionBuf[2] = (BYTE)((plainSize >> 8) & 0xFF);
-            sessionBuf[3] = (BYTE)((plainSize >> 16) & 0xFF);
-            sessionBuf[4] = (BYTE)((plainSize >> 24) & 0xFF);
-            memcpy(sessionBuf + 5, payload, payloadLen);
-            EncryptRC4(sessionBuf, (int)sessionLen, sessionKey, 16);
-            sendBuf = sessionBuf;
-            sendLen = sessionLen;
-        }
-        else {
-            EncryptRC4(plainData, (int)plainSize, sessionKey, 16);
-            sendBuf = plainData;
-            sendLen = plainSize;
-        }
-
-        this->SendData(sendBuf, sendLen);
-
-        // Handle failed upload - store for retry
-        if (!this->lastQueryOk && sendBuf && sendLen) {
-            this->pendingUpload = (BYTE*)MemAllocLocal(sendLen);
-            if (this->pendingUpload) {
-                memcpy(this->pendingUpload, sendBuf, sendLen);
-                this->pendingUploadSize = sendLen;
-                this->uploadBackoffMs = 500;
-                this->nextUploadAttemptTick = this->functions->GetTickCount() + this->uploadBackoffMs + (this->functions->GetTickCount() & 0x3FF);
+        if (sessionLen >= 5) {
+            sendBuf = (BYTE*)MemAllocLocal(sessionLen);
+            if (sendBuf) {
+                sendBufAllocated = TRUE;
+                sendBuf[0] = flags;
+                sendBuf[1] = (BYTE)(plainSize & 0xFF);
+                sendBuf[2] = (BYTE)((plainSize >> 8) & 0xFF);
+                sendBuf[3] = (BYTE)((plainSize >> 16) & 0xFF);
+                sendBuf[4] = (BYTE)((plainSize >> 24) & 0xFF);
+                memcpy(sendBuf + 5, payload, payloadLen);
+                EncryptRC4(sendBuf, (int)sessionLen, sessionKey, 16);
+                sendLen = sessionLen;
             }
         }
 
-        if (sessionBuf)
-            MemFreeLocal((LPVOID*)&sessionBuf, sessionLen);
+        if (!sendBuf) {
+            // Fallback: allocate a temporary buffer so we never encrypt caller's memory in-place
+            sendBuf = (BYTE*)MemAllocLocal(plainSize);
+            if (sendBuf) {
+                sendBufAllocated = TRUE;
+                memcpy(sendBuf, plainData, plainSize);
+                EncryptRC4(sendBuf, (int)plainSize, sessionKey, 16);
+                sendLen = plainSize;
+            }
+        }
+
+        if (sendBuf && sendLen) {
+            this->SendData(sendBuf, sendLen);
+
+            // Handle failed upload - store for retry
+            if (!this->lastQueryOk) {
+                this->pendingUpload = (BYTE*)MemAllocLocal(sendLen);
+                if (this->pendingUpload) {
+                    memcpy(this->pendingUpload, sendBuf, sendLen);
+                    this->pendingUploadSize = sendLen;
+                    this->uploadBackoffMs = 500;
+                    this->nextUploadAttemptTick = this->functions->GetTickCount() + this->uploadBackoffMs + (this->functions->GetTickCount() & 0x3FF);
+                }
+            }
+        }
+
+        if (sendBufAllocated && sendBuf)
+            MemFreeLocal((LPVOID*)&sendBuf, sendLen);
 
         if ((flags & 0x1) && payload && payload != plainData)
             MemFreeLocal((LPVOID*)&payload, payloadLen);
@@ -1249,21 +1331,11 @@ void ConnectorDNS::SendData(BYTE* data, ULONG data_size)
         memset(dataLabel, 0, sizeof(dataLabel));
         memset(qname, 0, sizeof(qname));
 
-        ULONG maxBuf = pkt;
-        if (maxBuf > kMaxSafeFrame)
-            maxBuf = kMaxSafeFrame;
-        if (data_size && maxBuf > data_size)
-            maxBuf = data_size;
-
-        BYTE* encBuf = (BYTE*)MemAllocLocal(maxBuf);
-        if (!encBuf)
-            return;
-        memcpy(encBuf, data, maxBuf);
-        if (!DnsCodec::BuildDataLabels(encBuf, maxBuf, this->labelSize, dataLabel, sizeof(dataLabel))) {
-            MemFreeLocal((LPVOID*)&encBuf, maxBuf);
+        // Attempt to send the full buffer; BuildDataLabels will fail if the resulting
+        // qname would exceed DNS length limits, preventing a truncated/corrupt HI.
+        if (!DnsCodec::BuildDataLabels(data, data_size, this->labelSize, dataLabel, sizeof(dataLabel))) {
             return;
         }
-        MemFreeLocal((LPVOID*)&encBuf, maxBuf);
 
         ULONG hiWireSeq = BuildWireSeq(this->seq, kDnsSignalBits);
         DnsCodec::BuildQName(this->sid, "www", hiWireSeq, this->idx, dataLabel, this->domain, qname, sizeof(qname));
@@ -1298,6 +1370,17 @@ void ConnectorDNS::SendData(BYTE* data, ULONG data_size)
         // Reset upload tracking state
         ResetUploadState();
         this->uploadStartTime = this->functions->GetTickCount();
+
+        // Allocate offset-confirmed bitmap for this upload
+        this->uploadTotal = total;
+        ULONG bitmapSize = (total + 7) / 8;
+        if (bitmapSize > 0) {
+            this->confirmedBitmap = (BYTE*)MemAllocLocal(bitmapSize);
+            if (this->confirmedBitmap) {
+                memset(this->confirmedBitmap, 0, bitmapSize);
+                this->confirmedBitmapSize = bitmapSize;
+            }
+        }
 
         ULONG seqForSend = ++this->seq;
         ULONG offset = 0;
@@ -1442,6 +1525,7 @@ void ConnectorDNS::SendData(BYTE* data, ULONG data_size)
         if (!encBuf)
             return;
         memcpy(encBuf, this->hiBeat, retrySize);
+        // hiBeat is already encrypted with profile.encrypt_key, do NOT re-encrypt
         if (!DnsCodec::BuildDataLabels(encBuf, retrySize, this->labelSize, dataLabel, sizeof(dataLabel))) {
             MemFreeLocal((LPVOID*)&encBuf, retrySize);
             return;

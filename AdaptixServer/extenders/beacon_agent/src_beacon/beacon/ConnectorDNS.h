@@ -122,10 +122,10 @@ private:
     BOOL  forcePoll = FALSE;
     ULONG consecutiveFailures = 0;
 
-    // Upload fragment tracking for reliability
-    static const ULONG kMaxTrackedOffsets = 256;
-    ULONG confirmedOffsets[kMaxTrackedOffsets] = { 0 };
-    ULONG confirmedCount = 0;
+    // Upload fragment tracking for reliability (bitmap: 1 bit per byte offset)
+    BYTE* confirmedBitmap = NULL;
+    ULONG confirmedBitmapSize = 0;
+    ULONG uploadTotal = 0;
     ULONG lastAckNextExpected = 0;
     BOOL  uploadNeedsReset = FALSE;
     ULONG uploadStartTime = 0;
