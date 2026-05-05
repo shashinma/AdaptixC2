@@ -130,8 +130,21 @@ func (ts *Teamserver) extractPivotTasks(agent *Agent, availableSize int, startSi
 		if lostSize <= 0 {
 			break
 		}
-		data, err := ts.TsAgentGetHostedAll(pivotData.ChildAgentId, lostSize)
+		// Do not use TsAgentGetHostedAll(child) here: when the child has queued tasks but
+		// they do not fit in lostSize, TsTaskGetAvailableAll returns an empty slice while
+		// TsAgentGetHostedAll still PackData([]) and returns a small blob (~tens of bytes).
+		// The parent would wrap that as COMMAND_PIVOT_EXEC — the child runs an empty
+		// message and the real task stays queued (commands never execute).
+		childAgent, err := ts.getAgent(pivotData.ChildAgentId)
 		if err != nil {
+			continue
+		}
+		childTasks, err := ts.TsTaskGetAvailableAll(pivotData.ChildAgentId, lostSize)
+		if err != nil || len(childTasks) == 0 {
+			continue
+		}
+		data, err := childAgent.PackData(childTasks)
+		if err != nil || len(data) == 0 {
 			continue
 		}
 		pivotTaskData, err := agent.PivotPackData(pivotData.PivotId, data)
@@ -159,11 +172,13 @@ func (ts *Teamserver) TsTaskGetAvailableAll(agentId string, availableSize int) (
 		ts.TsSyncAllClients(packet)
 	}
 
-	tunnelTasks, size := ts.extractTunnelTasks(agent, availableSize, size)
-	tasks = append(tasks, tunnelTasks...)
-
-	pivotTasks, _ := ts.extractPivotTasks(agent, availableSize, size)
+	// Prioritize pivot child tasks over tunnel traffic from the parent.
+	// Otherwise a busy parent tunnel queue can starve child command delivery.
+	pivotTasks, size := ts.extractPivotTasks(agent, availableSize, size)
 	tasks = append(tasks, pivotTasks...)
+
+	tunnelTasks, _ := ts.extractTunnelTasks(agent, availableSize, size)
+	tasks = append(tasks, tunnelTasks...)
 
 	return tasks, nil
 }

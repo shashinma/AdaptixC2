@@ -194,7 +194,11 @@ func (ts *Teamserver) TsAgentProcessData(agentId string, bodyData []byte) error 
 		// -----------------
 	}
 
-	if len(bodyData) > 4 {
+	// Any non-empty frame is a real agent payload (RC4/AES). Pivot uplink from a
+	// parent can be short (e.g. minimal packed/encrypted blob); len>4 used to drop
+	// noise but silently discarded valid <=4-byte ciphertexts so child output never
+	// reached ProcessData.
+	if len(bodyData) > 0 {
 		return agent.ProcessData(bodyData)
 	}
 
@@ -213,12 +217,13 @@ func (ts *Teamserver) TsAgentGetHostedAll(agentId string, maxDataSize int) ([]by
 	tasksCount := agent.HostedTasks.Len()
 	tunnelConnectCount := agent.HostedTunnelTasks.Len()
 	tunnelTasksCount := agent.HostedTunnelData.Len()
+	hasPivots := agent.PivotChilds.Len() > 0
 	pivotTasksExists := false
-	if agent.PivotChilds.Len() > 0 {
+	if hasPivots {
 		pivotTasksExists = ts.TsTasksPivotExists(agentData.Id, true)
 	}
 
-	if tasksCount > 0 || tunnelConnectCount > 0 || tunnelTasksCount > 0 || pivotTasksExists {
+	if tasksCount > 0 || tunnelConnectCount > 0 || tunnelTasksCount > 0 || pivotTasksExists || hasPivots {
 
 		tasks, err := ts.TsTaskGetAvailableAll(agentData.Id, maxDataSize)
 		if err != nil {
@@ -268,6 +273,16 @@ func (ts *Teamserver) TsAgentGetHostedTasks(agentId string, maxDataSize int) ([]
 	}
 
 	return respData, nil
+}
+
+// TsAgentPackPoll returns an encrypted no-op frame for strict request/response polls.
+// It keeps framing aligned without consuming application bytes from the socket.
+func (ts *Teamserver) TsAgentPackPoll(agentId string) ([]byte, error) {
+	agent, err := ts.getAgent(agentId)
+	if err != nil {
+		return nil, err
+	}
+	return agent.PackData([]adaptix.TaskData{})
 }
 
 func (ts *Teamserver) TsAgentGetHostedTasksCount(agentId string, count int, maxDataSize int) ([]byte, error) {
