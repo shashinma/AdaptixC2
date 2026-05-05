@@ -35,6 +35,11 @@ function ListenerUI(mode_create)
     let buttonEncryptKey = form.create_button("Generate");
     buttonEncryptKey.setEnabled(mode_create);
 
+    let labelCryptoType = form.create_label("Encryption:");
+    let comboCryptoType = form.create_combo();
+    comboCryptoType.addItems(["RC4", "AES"]);
+    comboCryptoType.setCurrentIndex(1);
+
     let checkBurstEnabled = form.create_check("Enable Burst Mode");
     checkBurstEnabled.setChecked(false);
 
@@ -77,12 +82,14 @@ function ListenerUI(mode_create)
     layout.addWidget(labelEncryptKey,  5, 0, 1, 1);
     layout.addWidget(textEncryptKey,   5, 1, 1, 1);
     layout.addWidget(buttonEncryptKey, 5, 2, 1, 1);
-    layout.addWidget(checkBurstEnabled, 6, 0, 1, 3);
-    layout.addWidget(labelBurstSleep,  7, 0, 1, 1);
-    layout.addWidget(spinBurstSleep,   7, 1, 1, 2);
-    layout.addWidget(labelBurstJitter, 8, 0, 1, 1);
-    layout.addWidget(spinBurstJitter,  8, 1, 1, 2);
-    layout.addWidget(spacer2,          9, 0, 1, 3);
+    layout.addWidget(labelCryptoType,  6, 0, 1, 1);
+    layout.addWidget(comboCryptoType,  6, 1, 1, 2);
+    layout.addWidget(checkBurstEnabled, 7, 0, 1, 3);
+    layout.addWidget(labelBurstSleep,  8, 0, 1, 1);
+    layout.addWidget(spinBurstSleep,   8, 1, 1, 2);
+    layout.addWidget(labelBurstJitter, 9, 0, 1, 1);
+    layout.addWidget(spinBurstJitter,  9, 1, 1, 2);
+    layout.addWidget(spacer2,          10, 0, 1, 3);
 
     let container = form.create_container();
     container.put("host_bind",     comboHostBind);
@@ -91,6 +98,7 @@ function ListenerUI(mode_create)
     container.put("pkt_size",      spinPktSize);
     container.put("ttl",           spinTTL);
     container.put("encrypt_key",   textEncryptKey);
+    container.put("crypto_type",   comboCryptoType);
     container.put("burst_enabled", checkBurstEnabled);
     container.put("burst_sleep",   spinBurstSleep);
     container.put("burst_jitter",  spinBurstJitter);

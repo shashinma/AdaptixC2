@@ -43,6 +43,11 @@ function ListenerUI(mode_create)
     let buttonEncryptKey = form.create_button("Generate");
     buttonEncryptKey.setEnabled(mode_create)
 
+    let labelCryptoType = form.create_label("Encryption:");
+    let comboCryptoType = form.create_combo();
+    comboCryptoType.addItems(["RC4", "AES"]);
+    comboCryptoType.setCurrentIndex(1);
+
     let certSelector = form.create_selector_file();
     certSelector.setPlaceholder("SSL Certificate (optional, auto-generate if empty)");
     let keySelector = form.create_selector_file();
@@ -75,7 +80,9 @@ function ListenerUI(mode_create)
     layoutMain.addWidget(labelEncryptKey,    6, 0, 1, 1);
     layoutMain.addWidget(textlineEncryptKey, 6, 1, 1, 1);
     layoutMain.addWidget(buttonEncryptKey,   6, 2, 1, 1);
-    layoutMain.addWidget(ssl_group,          7, 0, 1, 3);
+    layoutMain.addWidget(labelCryptoType,    7, 0, 1, 1);
+    layoutMain.addWidget(comboCryptoType,    7, 1, 1, 2);
+    layoutMain.addWidget(ssl_group,          8, 0, 1, 3);
 
     let panelMain = form.create_panel();
     panelMain.setLayout(layoutMain);
@@ -152,6 +159,7 @@ function ListenerUI(mode_create)
     container.put("user_agent",         textUserAgent);
     container.put("hb_header",          textlineHB);
     container.put("encrypt_key",        textlineEncryptKey);
+    container.put("crypto_type",        comboCryptoType);
     container.put("ssl",                ssl_group);
     container.put("ssl_cert",           certSelector);
     container.put("ssl_key",            keySelector);

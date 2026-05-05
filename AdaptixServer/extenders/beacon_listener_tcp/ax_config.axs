@@ -20,6 +20,11 @@ function ListenerUI(mode_create)
     let buttonEncryptKey = form.create_button("Generate");
     buttonEncryptKey.setEnabled(mode_create)
 
+    let labelCryptoType = form.create_label("Encryption:");
+    let comboCryptoType = form.create_combo();
+    comboCryptoType.addItems(["RC4", "AES"]);
+    comboCryptoType.setCurrentIndex(1);
+
     let spacer2 = form.create_vspacer()
 
     form.connect(buttonEncryptKey, "clicked", function() { textlineEncryptKey.setText( ax.random_string(32, "hex") ); });
@@ -33,12 +38,15 @@ function ListenerUI(mode_create)
     layout.addWidget(labelEncryptKey,    3, 0, 1, 1);
     layout.addWidget(textlineEncryptKey, 3, 1, 1, 1);
     layout.addWidget(buttonEncryptKey,   3, 2, 1, 1);
-    layout.addWidget(spacer2,            4, 0, 1, 3);
+    layout.addWidget(labelCryptoType,    4, 0, 1, 1);
+    layout.addWidget(comboCryptoType,    4, 1, 1, 2);
+    layout.addWidget(spacer2,            5, 0, 1, 3);
 
     let container = form.create_container();
     container.put("port_bind", spinPortBind);
     container.put("prepend_data", textlinePrepend);
     container.put("encrypt_key", textlineEncryptKey);
+    container.put("crypto_type", comboCryptoType);
 
     let panel = form.create_panel();
     panel.setLayout(layout);
