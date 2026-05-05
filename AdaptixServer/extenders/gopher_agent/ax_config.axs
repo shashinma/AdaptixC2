@@ -182,8 +182,23 @@ function RegisterCommands(listenerType)
     cmd_zip_unix.addArgString("path", true);
     cmd_zip_unix.addArgString("zip_path", true);
 
-    let commands_win  = ax.create_commands_group("gopher", [cmd_cat_win,  cmd_cp, cmd_cd_win,  cmd_download_win,  cmd_execute, cmd_exit, cmd_job, cmd_kill, cmd_ls_win,  cmd_mv, cmd_mkdir_win,  cmd_ps, cmd_pwd, cmd_rev2self, cmd_rm_win,  cmd_run_win,  cmd_screenshot, cmd_socks, cmd_shell_win,  cmd_upload_win,  cmd_zip_win] );
-    let commands_unix = ax.create_commands_group("gopher", [cmd_cat_unix, cmd_cp, cmd_cd_unix, cmd_download_unix,              cmd_exit, cmd_job, cmd_kill, cmd_ls_unix, cmd_mv, cmd_mkdir_unix, cmd_ps, cmd_pwd,               cmd_rm_unix, cmd_run_unix, cmd_screenshot, cmd_socks, cmd_shell_unix, cmd_upload_unix, cmd_zip_unix] );
+    let _cmd_link_smb = ax.create_command("smb", "Connect to an SMB agent and re-establish control of it", "link smb 192.168.1.2 pipe_name user pass", "Task: Connect to an SMB agent");
+    _cmd_link_smb.addArgString("target", true);
+    _cmd_link_smb.addArgString("pipename", true);
+    _cmd_link_smb.addArgString("username", false);
+    _cmd_link_smb.addArgString("password", false);
+    _cmd_link_smb.addArgString("domain", false);
+    let _cmd_link_tcp = ax.create_command("tcp", "Connect to a TCP agent and re-establish control of it", "link tcp 192.168.1.2 8888", "Task: Connect to a TCP agent");
+    _cmd_link_tcp.addArgString("target", true);
+    _cmd_link_tcp.addArgInt("port", true);
+    let cmd_link = ax.create_command("link", "Connect to pivot agents");
+    cmd_link.addSubCommands([_cmd_link_smb, _cmd_link_tcp]);
+
+    let cmd_unlink = ax.create_command("unlink", "Disconnect from a pivot agent", "unlink 1a2b3c4d", "Task: disconnect from a pivot agent");
+    cmd_unlink.addArgString("id", true);
+
+    let commands_win  = ax.create_commands_group("gopher", [cmd_cat_win,  cmd_cp, cmd_cd_win,  cmd_download_win,  cmd_execute, cmd_exit, cmd_job, cmd_kill, cmd_link, cmd_ls_win,  cmd_mv, cmd_mkdir_win,  cmd_ps, cmd_pwd, cmd_rev2self, cmd_rm_win,  cmd_run_win,  cmd_screenshot, cmd_socks, cmd_shell_win,  cmd_unlink, cmd_upload_win,  cmd_zip_win] );
+    let commands_unix = ax.create_commands_group("gopher", [cmd_cat_unix, cmd_cp, cmd_cd_unix, cmd_download_unix,              cmd_exit, cmd_job, cmd_kill, cmd_link, cmd_ls_unix, cmd_mv, cmd_mkdir_unix, cmd_ps, cmd_pwd,               cmd_rm_unix, cmd_run_unix, cmd_screenshot, cmd_socks, cmd_shell_unix, cmd_unlink, cmd_upload_unix, cmd_zip_unix] );
 
     return {
         commands_windows: commands_win,
@@ -218,6 +233,13 @@ function GenerateUI(listeners_type)
     let spinReconnCount = form.create_spin();
     spinReconnCount.setRange(0, 1000000000);
     spinReconnCount.setValue(1000000000);
+
+    if( !listeners_type.includes("GopherTCP") ) {
+        labelReconnTimeout.setVisible(false);
+        textReconnTimeout.setVisible(false);
+        labelReconnCount.setVisible(false);
+        spinReconnCount.setVisible(false);
+    }
 
     let layout = form.create_gridlayout();
     layout.addWidget(labelOS, 0, 0, 1, 1);

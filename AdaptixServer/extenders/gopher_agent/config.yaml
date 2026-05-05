@@ -6,4 +6,6 @@ agent_name: "gopher"
 agent_watermark: "904e5493"
 listeners:
   - "GopherTCP"
+  - "GopherBindTCP"
+  - "GopherBindSMB"
 multi_listeners: true
