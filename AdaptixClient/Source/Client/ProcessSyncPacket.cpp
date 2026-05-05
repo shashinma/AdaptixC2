@@ -1086,7 +1086,8 @@ void AdaptixWidget::setSyncUpdateUI(const bool enabled)
 #ifdef HAS_QT_WEBENGINE
     if (BrowserDock)
         BrowserDock->setUpdatesEnabled(enabled);
-    for (EmbeddableBrowserWidget* w : chromelessWebPanels) {
+    const QList<EmbeddableBrowserWidget*> chromelessValues = chromelessWebPanels.values();
+    for (EmbeddableBrowserWidget* w : chromelessValues) {
         if (w)
             w->setUpdatesEnabled(enabled);
     }

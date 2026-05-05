@@ -552,6 +552,10 @@ void AdaptixWidget::Close()
     delete ScreenshotsDock;
     delete CredentialsDock;
     delete TargetsDock;
+#ifdef HAS_QT_WEBENGINE
+    delete BrowserDock;
+    BrowserDock = nullptr;
+#endif
 
     delete dockTop;
     delete dockBottom;
@@ -1177,11 +1181,26 @@ void AdaptixWidget::LoadHvncUI(const QString &AgentId)
 }
 
 #ifdef HAS_QT_WEBENGINE
+static QString sanitizeBrowserLogicalId(const QString& id)
+{
+    QString s = id.trimmed();
+    if (s.isEmpty())
+        return QStringLiteral("default");
+    for (QChar& c : s) {
+        if (!c.isLetterOrNumber() && c != QLatin1Char('-') && c != QLatin1Char('_'))
+            c = QLatin1Char('_');
+    }
+    if (s.length() > 64)
+        s = s.left(64);
+    return s;
+}
+
 QString AdaptixWidget::chromelessExtDockId(const QString& logicalId) const
 {
+    const QString safeId = sanitizeBrowserLogicalId(logicalId);
     if (!profile)
-        return QStringLiteral("chromeless_%1").arg(logicalId);
-    return QStringLiteral("chromeless_%1_%2").arg(logicalId, profile->GetProject());
+        return QStringLiteral("chromeless_%1").arg(safeId);
+    return QStringLiteral("chromeless_%1_%2").arg(safeId, profile->GetProject());
 }
 
 void AdaptixWidget::clearChromelessWebPanels()
@@ -1200,7 +1219,7 @@ void AdaptixWidget::CloseChromelessWebPanel(const QString& panelId)
     if (!dock)
         return;
     RemoveExtDock(chromelessExtDockId(logicalId));
-    dock->deleteLater();
+    delete dock;
 }
 
 void AdaptixWidget::LoadChromelessWebPanel(const QString& panelId, const QString& title, const QString& url,
@@ -1260,6 +1279,7 @@ void AdaptixWidget::applyChromelessWebModulesJson(const QString& jsonPayload)
     }
 
     QSet<QString> wantIds;
+    QSet<QString> processedIds;
     for (const QJsonValue& v : apps) {
         if (!v.isObject())
             continue;
@@ -1284,8 +1304,18 @@ void AdaptixWidget::applyChromelessWebModulesJson(const QString& jsonPayload)
         if (id.isEmpty() || modTitle.isEmpty() || urlStr.isEmpty())
             continue;
 
-        const QUrl pageUrl = QUrl::fromUserInput(urlStr);
+        // Skip duplicate IDs – first occurrence wins
+        if (processedIds.contains(id))
+            continue;
+        processedIds.insert(id);
+
+        QUrl pageUrl = QUrl::fromUserInput(urlStr);
         if (!pageUrl.isValid() || pageUrl.isEmpty())
+            continue;
+
+        // Only allow http/https schemes for security
+        const QString scheme = pageUrl.scheme().toLower();
+        if (scheme != QStringLiteral("http") && scheme != QStringLiteral("https"))
             continue;
 
         const QString proxyHost = o[QStringLiteral("proxy_host")].toString().trimmed();
@@ -1294,7 +1324,7 @@ void AdaptixWidget::applyChromelessWebModulesJson(const QString& jsonPayload)
 
         LoadChromelessWebPanel(id, modTitle, pageUrl.toString(),
                                proxyHost,
-                               proxyPort > 0 ? static_cast<quint16>(proxyPort) : static_cast<quint16>(0),
+                               proxyPort > 0 && proxyPort <= 65535 ? static_cast<quint16>(proxyPort) : static_cast<quint16>(0),
                                modIcon);
     }
 }
