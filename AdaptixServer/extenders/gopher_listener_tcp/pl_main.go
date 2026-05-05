@@ -18,6 +18,7 @@ type Teamserver interface {
 	TsAgentProcessData(agentId string, bodyData []byte) error
 	TsAgentGetHostedAll(agentId string, maxDataSize int) ([]byte, error)
 	TsAgentGetHostedTasks(agentId string, maxDataSize int) ([]byte, error)
+	TsAgentPackPoll(agentId string) ([]byte, error)
 	TsAgentUpdateDataPartial(agentId string, updateData interface{}) error
 
 	TsTaskRunningExists(agentId string, taskId string) bool
@@ -59,7 +60,6 @@ func (p *PluginListener) Create(name string, config string, customData []byte) (
 		err          error
 	)
 
-	/// START CODE HERE
 
 	if customData == nil {
 		if err = validConfig(config); err != nil {
@@ -111,17 +111,14 @@ func (p *PluginListener) Create(name string, config string, customData []byte) (
 
 	listener = &Listener{transport: transport}
 
-	/// END CODE HERE
 
 	return listener, listenerData, customdData, nil
 }
 
 func (l *Listener) Start() error {
-	/// START CODE HERE
 
 	return l.transport.Start(Ts)
 
-	/// END CODE HERE
 }
 
 func (l *Listener) Edit(config string) (adaptix.ListenerData, []byte, error) {
@@ -137,7 +134,6 @@ func (l *Listener) Edit(config string) (adaptix.ListenerData, []byte, error) {
 		return listenerData, customdData, err
 	}
 
-	/// START CODE HERE
 
 	conf.Callback_addresses = strings.ReplaceAll(conf.Callback_addresses, " ", "")
 	conf.Callback_addresses = strings.ReplaceAll(conf.Callback_addresses, "\n", ", ")
@@ -165,30 +161,25 @@ func (l *Listener) Edit(config string) (adaptix.ListenerData, []byte, error) {
 	}
 	customdData = buffer.Bytes()
 
-	/// END CODE HERE
 
 	return listenerData, customdData, nil
 }
 
 func (l *Listener) Stop() error {
-	/// START CODE HERE
 
 	return l.transport.Stop()
 
-	/// END CODE HERE
 }
 
 func (l *Listener) GetProfile() ([]byte, error) {
 	var buffer bytes.Buffer
 
-	/// START CODE HERE
 
 	err := json.NewEncoder(&buffer).Encode(l.transport.Config)
 	if err != nil {
 		return nil, err
 	}
 
-	/// END CODE HERE
 
 	return buffer.Bytes(), nil
 }
@@ -196,9 +187,7 @@ func (l *Listener) GetProfile() ([]byte, error) {
 func (l *Listener) InternalHandler(data []byte) (string, error) {
 	var agentId = ""
 
-	/// START CODE HERE
 
-	/// END CODE HERE
 
 	return agentId, errors.New("not implemented")
 }

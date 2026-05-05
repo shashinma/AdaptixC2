@@ -129,7 +129,6 @@ func getBoolArg(args map[string]any, key string) bool {
 	return v
 }
 
-/// TUNNEL
 
 func (ext *ExtenderAgent) TunnelCallbacks() adaptix.TunnelCallbacks {
 	return adaptix.TunnelCallbacks{
@@ -146,52 +145,46 @@ func (ext *ExtenderAgent) TunnelCallbacks() adaptix.TunnelCallbacks {
 
 func TunnelMessageConnectTCP(channelId int, tunnelType int, addressType int, address string, port int) adaptix.TaskData {
 	var packData []byte
-	/// START CODE HERE
 	addr := fmt.Sprintf("%s:%d", address, port)
 	packerData, _ := msgpack.Marshal(ParamsTunnelStart{Proto: "tcp", ChannelId: channelId, Address: addr})
 	cmd := Command{Code: COMMAND_TUNNEL_START, Data: packerData}
 	packData, _ = msgpack.Marshal(cmd)
-	/// END CODE HERE
 	return makeProxyTask(packData)
 }
 
 func TunnelMessageConnectUDP(channelId int, tunnelType int, addressType int, address string, port int) adaptix.TaskData {
 	var packData []byte
-	/// START CODE HERE
 	addr := fmt.Sprintf("%s:%d", address, port)
 	packerData, _ := msgpack.Marshal(ParamsTunnelStart{Proto: "udp", ChannelId: channelId, Address: addr})
 	cmd := Command{Code: COMMAND_TUNNEL_START, Data: packerData}
 	packData, _ = msgpack.Marshal(cmd)
-	/// END CODE HERE
 	return makeProxyTask(packData)
 }
 
 func TunnelMessageWriteTCP(channelId int, data []byte) adaptix.TaskData {
-	/// START CODE HERE
-	/// END CODE HERE
-	return makeProxyTask(data)
+	packerData, _ := msgpack.Marshal(ParamsTunnelWrite{ChannelId: channelId, Data: data})
+	cmd := Command{Code: COMMAND_TUNNEL_WRITE, Data: packerData}
+	packData, _ := msgpack.Marshal(cmd)
+	return makeProxyTask(packData)
 }
 
 func TunnelMessageWriteUDP(channelId int, data []byte) adaptix.TaskData {
-	/// START CODE HERE
-	/// END CODE HERE
-	return makeProxyTask(data)
+	packerData, _ := msgpack.Marshal(ParamsTunnelWrite{ChannelId: channelId, Data: data})
+	cmd := Command{Code: COMMAND_TUNNEL_WRITE, Data: packerData}
+	packData, _ := msgpack.Marshal(cmd)
+	return makeProxyTask(packData)
 }
 
 func TunnelMessageClose(channelId int) adaptix.TaskData {
 	var packData []byte
-	/// START CODE HERE
 	packerData, _ := msgpack.Marshal(ParamsTunnelStop{ChannelId: channelId})
 	cmd := Command{Code: COMMAND_TUNNEL_STOP, Data: packerData}
 	packData, _ = msgpack.Marshal(cmd)
-	/// END CODE HERE
 	return makeProxyTask(packData)
 }
 
 func TunnelMessageReverse(tunnelId int, port int) adaptix.TaskData {
 	var packData []byte
-	/// START CODE HERE
-	/// END CODE HERE
 	return makeProxyTask(packData)
 }
 
@@ -211,7 +204,6 @@ func TunnelMessageResume(channelId int) adaptix.TaskData {
 	return makeProxyTask(packData)
 }
 
-/// TERMINAL
 
 func (ext *ExtenderAgent) TerminalCallbacks() adaptix.TerminalCallbacks {
 	return adaptix.TerminalCallbacks{
@@ -223,11 +215,9 @@ func (ext *ExtenderAgent) TerminalCallbacks() adaptix.TerminalCallbacks {
 
 func TerminalMessageStart(terminalId int, program string, sizeH int, sizeW int, oemCP int) adaptix.TaskData {
 	var packData []byte
-	/// START CODE HERE
 	packerData, _ := msgpack.Marshal(ParamsTerminalStart{TermId: terminalId, Program: program, Height: sizeH, Width: sizeW})
 	cmd := Command{Code: COMMAND_TERMINAL_START, Data: packerData}
 	packData, _ = msgpack.Marshal(cmd)
-	/// END CODE HERE
 	return makeProxyTask(packData)
 }
 
@@ -237,15 +227,12 @@ func TerminalMessageWrite(terminalId int, oemCP int, data []byte) adaptix.TaskDa
 
 func TerminalMessageClose(terminalId int) adaptix.TaskData {
 	var packData []byte
-	/// START CODE HERE
 	packerData, _ := msgpack.Marshal(ParamsTerminalStop{TermId: terminalId})
 	cmd := Command{Code: COMMAND_TERMINAL_STOP, Data: packerData}
 	packData, _ = msgpack.Marshal(cmd)
-	/// END CODE HERE
 	return makeProxyTask(packData)
 }
 
-////// PLUGIN AGENT
 
 type GenerateConfig struct {
 	Os               string `json:"os"`
@@ -268,7 +255,6 @@ func (p *PluginAgent) GenerateProfiles(profile adaptix.BuildProfile) ([][]byte, 
 			return nil, err
 		}
 
-		/// START CODE HERE
 
 		var (
 			generateConfig GenerateConfig
@@ -336,6 +322,7 @@ func (p *PluginAgent) GenerateProfiles(profile adaptix.BuildProfile) ([][]byte, 
 
 			profile := Profile{
 				Type:        uint(agentWatermark),
+				Protocol:    "tcp",
 				Addresses:   addresses,
 				BannerSize:  len(tcp_banner),
 				ConnTimeout: reconnectTimeout,
@@ -344,6 +331,36 @@ func (p *PluginAgent) GenerateProfiles(profile adaptix.BuildProfile) ([][]byte, 
 				SslCert:     sslCert,
 				SslKey:      sslKey,
 				CaCert:      caCert,
+			}
+			profileData, _ = msgpack.Marshal(profile)
+
+		case "bind_tcp":
+			port, _ := listenerMap["port_bind"].(float64)
+			bindAddr := fmt.Sprintf("0.0.0.0:%d", int(port))
+
+			listenerWatermark, _ := strconv.ParseInt(transportProfile.Watermark, 16, 64)
+
+			profile := Profile{
+				Type:      uint(listenerWatermark),
+				AgentType: uint(agentWatermark),
+				Protocol:  "bind_tcp",
+				Addresses: []string{bindAddr},
+				ConnCount: 1,
+			}
+			profileData, _ = msgpack.Marshal(profile)
+
+		case "bind_smb":
+			pipename, _ := listenerMap["pipename"].(string)
+			pipename = "\\\\.\\pipe\\" + pipename
+
+			listenerWatermark, _ := strconv.ParseInt(transportProfile.Watermark, 16, 64)
+
+			profile := Profile{
+				Type:      uint(listenerWatermark),
+				AgentType: uint(agentWatermark),
+				Protocol:  "bind_smb",
+				Addresses: []string{pipename},
+				ConnCount: 1,
 			}
 			profileData, _ = msgpack.Marshal(profile)
 
@@ -361,9 +378,6 @@ func (p *PluginAgent) GenerateProfiles(profile adaptix.BuildProfile) ([][]byte, 
 		}
 		agentProfiles = append(agentProfiles, []byte(profileString))
 
-		fmt.Println(profileString)
-
-		/// END CODE HERE
 	}
 	return agentProfiles, nil
 }
@@ -374,7 +388,6 @@ func (p *PluginAgent) BuildPayload(profile adaptix.BuildProfile, agentProfiles [
 		Payload  []byte
 	)
 
-	/// START CODE HERE
 
 	var (
 		generateConfig GenerateConfig
@@ -422,7 +435,8 @@ func (p *PluginAgent) BuildPayload(profile adaptix.BuildProfile, agentProfiles [
 
 	_ = Ts.TsAgentBuildLog(profile.BuilderId, adaptix.BUILD_LOG_INFO, fmt.Sprintf("Target: %s/%s, Output: %s", GoOs, GoArch, Filename))
 
-	config := "package main\n\nvar encProfiles = [][]byte{\n"
+	config := "package main\n\n"
+	config += "var encProfiles = [][]byte{\n"
 	for _, profile := range agentProfiles {
 		config += fmt.Sprintf("    []byte(\"%s\"),\n", profile)
 	}
@@ -462,7 +476,6 @@ func (p *PluginAgent) BuildPayload(profile adaptix.BuildProfile, agentProfiles [
 	_ = os.RemoveAll(tempDir)
 	_ = Ts.TsAgentBuildLog(profile.BuilderId, adaptix.BUILD_LOG_INFO, fmt.Sprintf("Payload size: %d bytes", len(Payload)))
 
-	/// END CODE HERE
 
 	return Payload, Filename, nil
 }
@@ -470,7 +483,6 @@ func (p *PluginAgent) BuildPayload(profile adaptix.BuildProfile, agentProfiles [
 func (p *PluginAgent) CreateAgent(beat []byte) (adaptix.AgentData, adaptix.ExtenderAgent, error) {
 	var agentData adaptix.AgentData
 
-	/// START CODE HERE
 
 	var sessionInfo SessionInfo
 	err := msgpack.Unmarshal(beat, &sessionInfo)
@@ -506,16 +518,13 @@ func (p *PluginAgent) CreateAgent(beat []byte) (adaptix.AgentData, adaptix.Exten
 	agentData.Username = sessionInfo.User
 	agentData.Process = sessionInfo.Process
 
-	/// END CODE
 
 	return agentData, &ExtenderAgent{}, nil
 }
 
-/// AGENT HANDLER
 
 func (ext *ExtenderAgent) Encrypt(data []byte, key []byte) ([]byte, error) {
 
-	/// START CODE
 
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -534,14 +543,12 @@ func (ext *ExtenderAgent) Encrypt(data []byte, key []byte) ([]byte, error) {
 	}
 	ciphertext := gcm.Seal(nonce, nonce, data, nil)
 
-	/// END CODE
 
 	return ciphertext, nil
 }
 
 func (ext *ExtenderAgent) Decrypt(data []byte, key []byte) ([]byte, error) {
 
-	/// START CODE
 
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -565,7 +572,6 @@ func (ext *ExtenderAgent) Decrypt(data []byte, key []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	/// END CODE
 
 	return plaintext, nil
 }
@@ -574,7 +580,6 @@ func (ext *ExtenderAgent) PackTasks(agentData adaptix.AgentData, tasks []adaptix
 
 	var packData []byte
 
-	/// START CODE HERE
 
 	var objects [][]byte
 	var command Command
@@ -600,22 +605,31 @@ func (ext *ExtenderAgent) PackTasks(agentData adaptix.AgentData, tasks []adaptix
 
 	packData, _ = msgpack.Marshal(message)
 
-	/// END CODE
 
 	return packData, nil
 }
 
 func (ext *ExtenderAgent) PivotPackData(pivotId string, data []byte) (adaptix.TaskData, error) {
-	var (
-		packData []byte
-		err      error = nil
-	)
+	var packData []byte
 
-	/// START CODE HERE
 
-	err = errors.New("Function Pivot not packed")
+	id, err := strconv.ParseUint(strings.TrimSpace(pivotId), 16, 64)
+	if err != nil {
+		return adaptix.TaskData{}, fmt.Errorf("invalid pivot id %q: %w", pivotId, err)
+	}
+	if id > 0xffffffff {
+		return adaptix.TaskData{}, fmt.Errorf("pivot id %q out of range", pivotId)
+	}
+	paramData, err := msgpack.Marshal(ParamsPivotExec{PivotId: uint32(id), Data: data})
+	if err != nil {
+		return adaptix.TaskData{}, err
+	}
+	cmd := Command{Code: COMMAND_PIVOT_EXEC, Data: paramData}
+	packData, err = msgpack.Marshal(cmd)
+	if err != nil {
+		return adaptix.TaskData{}, err
+	}
 
-	/// END CODE
 
 	taskData := adaptix.TaskData{
 		TaskId: fmt.Sprintf("%08x", mrand.Uint32()),
@@ -624,7 +638,7 @@ func (ext *ExtenderAgent) PivotPackData(pivotId string, data []byte) (adaptix.Ta
 		Sync:   false,
 	}
 
-	return taskData, err
+	return taskData, nil
 }
 
 func (ext *ExtenderAgent) CreateCommand(agentData adaptix.AgentData, args map[string]any) (adaptix.TaskData, adaptix.ConsoleMessageData, error) {
@@ -651,7 +665,6 @@ func (ext *ExtenderAgent) CreateCommand(agentData adaptix.AgentData, args map[st
 	}
 	messageData.Message, _ = args["message"].(string)
 
-	/// START CODE HERE
 
 	var cmd Command
 
@@ -995,6 +1008,62 @@ func (ext *ExtenderAgent) CreateCommand(agentData adaptix.AgentData, args map[st
 		packerData, _ := msgpack.Marshal(ParamsZip{Src: path, Dst: zip_path})
 		cmd = Command{Code: COMMAND_ZIP, Data: packerData}
 
+	case "link":
+		if subcommand == "smb" {
+			var target string
+			var pipename string
+			target, err = getStringArg(args, "target")
+			if err != nil {
+				goto RET
+			}
+			pipename, err = getStringArg(args, "pipename")
+			if err != nil {
+				goto RET
+			}
+			username, _ := args["username"].(string)
+			password, _ := args["password"].(string)
+			domain, _ := args["domain"].(string)
+			pipe := fmt.Sprintf("\\\\%s\\pipe\\%s", target, pipename)
+			packerData, _ := msgpack.Marshal(ParamsLink{Type: 1, Target: pipe, Username: username, Password: password, Domain: domain})
+			cmd = Command{Code: COMMAND_LINK, Data: packerData}
+
+		} else if subcommand == "tcp" {
+			var target string
+			var port float64
+			target, err = getStringArg(args, "target")
+			if err != nil {
+				goto RET
+			}
+			port, err = getFloatArg(args, "port")
+			if err != nil {
+				goto RET
+			}
+			packerData, _ := msgpack.Marshal(ParamsLink{Type: 2, Target: target, Port: int(port)})
+			cmd = Command{Code: COMMAND_LINK, Data: packerData}
+
+		} else {
+			err = errors.New("subcommand must be 'smb' or 'tcp'")
+			goto RET
+		}
+
+	case "unlink":
+		var pivotName string
+		pivotName, err = getStringArg(args, "id")
+		if err != nil {
+			goto RET
+		}
+		pivotId, _, _ := Ts.TsGetPivotInfoByName(pivotName)
+		if pivotId == "" {
+			pivotId, _, _ = Ts.TsGetPivotInfoById(pivotName)
+		}
+		if pivotId == "" {
+			err = fmt.Errorf("pivot %s does not exist", pivotName)
+			goto RET
+		}
+		id, _ := strconv.ParseInt(pivotId, 16, 64)
+		packerData, _ := msgpack.Marshal(ParamsUnlink{PivotId: uint32(id)})
+		cmd = Command{Code: COMMAND_UNLINK, Data: packerData}
+
 	default:
 		err = errors.New(fmt.Sprintf("Command '%v' not found", command))
 		goto RET
@@ -1002,7 +1071,6 @@ func (ext *ExtenderAgent) CreateCommand(agentData adaptix.AgentData, args map[st
 
 	taskData.Data, _ = msgpack.Marshal(cmd)
 
-	/// END CODE
 
 RET:
 	return taskData, messageData, err
@@ -1020,7 +1088,6 @@ func (ext *ExtenderAgent) ProcessData(agentData adaptix.AgentData, decryptedData
 		Sync:        true,
 	}
 
-	/// START CODE
 
 	var (
 		inMessage Message
@@ -1669,6 +1736,111 @@ func (ext *ExtenderAgent) ProcessData(agentData adaptix.AgentData, decryptedData
 				task.Message = fmt.Sprintf("Archive '%s' successfully created", params.Path)
 				task.MessageType = adaptix.MESSAGE_SUCCESS
 
+			case COMMAND_LINK:
+				var params AnsLink
+				err := msgpack.Unmarshal(cmd.Data, &params)
+				if err != nil {
+					continue
+				}
+
+				watermark := fmt.Sprintf("%08x", params.Watermark)
+				childAgentId, linkErr := Ts.TsListenerInteralHandler(watermark, params.Beat)
+				if linkErr != nil || childAgentId == "" {
+					errMsg := "unknown error"
+					if linkErr != nil {
+						errMsg = linkErr.Error()
+					}
+					task.MessageType = adaptix.MESSAGE_ERROR
+					task.Message = fmt.Sprintf("Link failed: %s (watermark=%s)", errMsg, watermark)
+				} else {
+					_ = Ts.TsPivotCreate(task.TaskId, agentData.Id, childAgentId, "", false)
+
+					if params.Type == 1 {
+						task.Message = fmt.Sprintf("----- New SMB pivot agent: [%s]===[%s] -----", agentData.Id, childAgentId)
+						Ts.TsAgentConsoleOutput(childAgentId, adaptix.MESSAGE_SUCCESS, task.Message, "\n", true)
+					} else if params.Type == 2 {
+						task.Message = fmt.Sprintf("----- New TCP pivot agent: [%s]===[%s] -----", agentData.Id, childAgentId)
+						Ts.TsAgentConsoleOutput(childAgentId, adaptix.MESSAGE_SUCCESS, task.Message, "\n", true)
+					}
+				}
+
+			case COMMAND_UNLINK:
+				var params AnsUnlink
+				err := msgpack.Unmarshal(cmd.Data, &params)
+				if err != nil {
+					continue
+				}
+
+				pivotId := fmt.Sprintf("%08x", params.PivotId)
+				messageParent := ""
+				messageChild := ""
+				_, parentAgentId, childAgentId := Ts.TsGetPivotInfoById(pivotId)
+
+				if params.Type == 1 {
+					messageParent = fmt.Sprintf("SMB agent disconnected %s", childAgentId)
+					messageChild = fmt.Sprintf(" ----- SMB agent disconnected from [%s] ----- ", parentAgentId)
+				} else if params.Type == 2 {
+					messageParent = fmt.Sprintf("TCP agent %s connection reset", childAgentId)
+					messageChild = " ----- TCP agent connection reset ----- "
+				} else if params.Type == 10 {
+					messageParent = fmt.Sprintf("Pivot agent %s connection reset", childAgentId)
+					messageChild = " ----- Pivot agent connection reset ----- "
+				}
+
+				if params.Type != 0 {
+					_ = Ts.TsPivotDelete(pivotId)
+					if cmd.Id == 0 {
+						Ts.TsAgentConsoleOutput(parentAgentId, adaptix.MESSAGE_SUCCESS, messageParent, "\n", true)
+					} else {
+						task.Message = messageParent
+					}
+					Ts.TsAgentConsoleOutput(childAgentId, adaptix.MESSAGE_SUCCESS, messageChild, "\n", true)
+				}
+
+			case COMMAND_PIVOT_EXEC:
+				var params AnsPivotExec
+				err := msgpack.Unmarshal(cmd.Data, &params)
+				if err != nil {
+					continue
+				}
+
+				pivotId := fmt.Sprintf("%08x", params.PivotId)
+				_, _, childAgentId := Ts.TsGetPivotInfoById(pivotId)
+				_ = Ts.TsAgentProcessData(childAgentId, params.Data)
+				continue
+
+			case COMMAND_TUNNEL_CONNECTED:
+				var params ParamsTunnelConnected
+				if err := msgpack.Unmarshal(cmd.Data, &params); err != nil {
+					continue
+				}
+				if params.Success {
+					Ts.TsTunnelConnectionResume(agentData.Id, params.ChannelId, false)
+				} else {
+					errorCode := byte(adaptix.SOCKS5_HOST_UNREACHABLE)
+					if params.Reason == 5 {
+						errorCode = byte(adaptix.SOCKS5_CONNECTION_REFUSED)
+					}
+					Ts.TsTunnelConnectionHalt(params.ChannelId, errorCode)
+				}
+				continue
+
+			case COMMAND_TUNNEL_WRITE:
+				var params ParamsTunnelWrite
+				if err := msgpack.Unmarshal(cmd.Data, &params); err != nil {
+					continue
+				}
+				Ts.TsTunnelConnectionData(params.ChannelId, params.Data)
+				continue
+
+			case COMMAND_TUNNEL_STOP:
+				var params ParamsTunnelStop
+				if err := msgpack.Unmarshal(cmd.Data, &params); err != nil {
+					continue
+				}
+				Ts.TsTunnelConnectionClose(params.ChannelId, false)
+				continue
+
 			case COMMAND_ERROR:
 				var params AnsError
 				err := msgpack.Unmarshal(cmd.Data, &params)
@@ -1845,7 +2017,6 @@ func (ext *ExtenderAgent) ProcessData(agentData adaptix.AgentData, decryptedData
 
 HANDLER:
 
-	/// END CODE
 
 	for _, task := range outTasks {
 		Ts.TsTaskUpdate(agentData.Id, task)

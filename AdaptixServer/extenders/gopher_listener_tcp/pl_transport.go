@@ -290,30 +290,30 @@ func (t *TransportTCP) handleConnection(conn net.Conn, ts Teamserver) {
 		t.AgentConnects.Put(agentId, connection)
 
 		for {
-			sendData, err = Ts.TsAgentGetHostedTasks(agentId, 0x1900000)
+			sendData, err = Ts.TsAgentGetHostedAll(agentId, 0x1900000)
+			if err != nil {
+				break
+			}
+			if len(sendData) == 0 {
+				sendData, err = Ts.TsAgentPackPoll(agentId)
+				if err != nil {
+					break
+				}
+			}
+
+			err = sendMsg(conn, sendData)
 			if err != nil {
 				break
 			}
 
-			if sendData != nil && len(sendData) > 0 {
-				err = sendMsg(conn, sendData)
-				if err != nil {
-					break
-				}
-
-				recvData, err = recvMsg(conn)
-				if err != nil {
-					break
-				}
-
-				_ = Ts.TsAgentSetTick(agentId, t.Name)
-
-				_ = Ts.TsAgentProcessData(agentId, recvData)
-			} else {
-				if !isClientConnected(conn, t.Config.Ssl) {
-					break
-				}
+			recvData, err = recvMsg(conn)
+			if err != nil {
+				break
 			}
+
+			_ = Ts.TsAgentSetTick(agentId, t.Name)
+
+			_ = Ts.TsAgentProcessData(agentId, recvData)
 		}
 
 		_ = ts.TsAgentUpdateDataPartial(agentId, struct {
