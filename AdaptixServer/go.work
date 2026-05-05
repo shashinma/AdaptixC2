@@ -8,5 +8,7 @@ use (
 	./extenders/beacon_listener_smb
 	./extenders/beacon_listener_tcp
 	./extenders/gopher_agent
+	./extenders/gopher_listener_bind_smb
+	./extenders/gopher_listener_bind_tcp
 	./extenders/gopher_listener_tcp
 )
