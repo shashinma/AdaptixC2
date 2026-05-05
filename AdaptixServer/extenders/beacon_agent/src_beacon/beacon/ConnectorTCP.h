@@ -96,6 +96,7 @@ public:
 
 private:
 	void SendData(BYTE* data, ULONG data_size);
+	void ReceiveData();
 	void Listen();
 	void DisconnectInternal();
 };

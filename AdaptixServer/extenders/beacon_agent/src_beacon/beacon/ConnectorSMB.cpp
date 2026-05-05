@@ -104,8 +104,6 @@ void ConnectorSMB::SendData(BYTE* data, ULONG data_size)
 {
     this->recvSize = 0;
 
-    if (!data || !data_size)
-        return;
 
     OVERLAPPED ovWrite = {};
     ovWrite.hEvent     = this->hWriteEvent;
@@ -118,6 +116,9 @@ void ConnectorSMB::SendData(BYTE* data, ULONG data_size)
         else
             return;
     }
+
+    if (!data || !data_size)
+        return;
 
     DWORD index = 0;
     while (index < data_size) {
@@ -143,8 +144,12 @@ void ConnectorSMB::SendData(BYTE* data, ULONG data_size)
 void ConnectorSMB::ReadIncoming()
 {
     ULONG msgLen = this->rdHeader;
-    if (msgLen == 0 || msgLen > 0x1000000) {
+    if (msgLen > 0x1000000) {
         this->connected = FALSE;
+        return;
+    }
+    if (msgLen == 0) {
+        this->recvSize = 0;
         return;
     }
 
@@ -224,8 +229,10 @@ void ConnectorSMB::Exchange(BYTE* plainData, ULONG plainSize, BYTE* sessionKey)
 
     if (plainData && plainSize > 0) {
         EncryptRC4(plainData, plainSize, sessionKey, 16);
-        this->SendData(plainData, plainSize);
     }
+
+
+    this->SendData(plainData, plainSize);
 
     if (!this->rdPending)
         return;

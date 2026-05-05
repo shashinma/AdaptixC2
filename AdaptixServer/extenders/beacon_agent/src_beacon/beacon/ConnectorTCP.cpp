@@ -120,95 +120,79 @@ void ConnectorTCP::SendData(BYTE* data, ULONG data_size)
 {
     this->recvSize = 0;
 
-    if (data && data_size) {
-		
-		if (this->functions->send(this->ClientSocket, (const char*)&data_size, 4, 0) != -1) {
-			DWORD index = 0;
-			DWORD size = 0;
-			DWORD NumberOfBytesWritten = 0;
-			while (1) {
-				size = data_size - index;
-				if (data_size - index > 0x1000)
-					size = 0x1000;
 
-				NumberOfBytesWritten = this->functions->send(this->ClientSocket, (const char*)(data + index), size, 0);
-				if (NumberOfBytesWritten == -1)
-					break;
-
-				index += NumberOfBytesWritten;
-				if (index >= data_size)
-					break;
-			}
-		}
+    if (this->functions->send(this->ClientSocket, (const char*)&data_size, 4, 0) == -1) {
+        this->recvSize = -1;
+        return;
     }
 
-	bool alive = false;
-	ULONG endTime = this->functions->GetTickCount() + 2500;
-	while (this->functions->GetTickCount() < endTime) {
+    if (data && data_size) {
+        DWORD index = 0;
+        DWORD size = 0;
+        DWORD NumberOfBytesWritten = 0;
+        while (1) {
+            size = data_size - index;
+            if (data_size - index > 0x1000)
+                size = 0x1000;
 
-		fd_set readfds;
-		readfds.fd_count = 1;
-		readfds.fd_array[0] = this->ClientSocket;
-		timeval timeout = { 0, 100 };
-
-		int selResult = this->functions->select(0, &readfds, NULL, NULL, &timeout);
-		if (selResult == 0) {
-			alive = true;
-			break;
-		}
-
-		if (selResult == SOCKET_ERROR)
-			break;
-
-		char buf;
-		int recvResult = this->functions->recv(this->ClientSocket, &buf, 1, MSG_PEEK);
-		if (recvResult == 0)
-			break;
-
-		if (recvResult < 0) {
-			if (this->functions->WSAGetLastError() == WSAEWOULDBLOCK) {
-				alive = true;
-				break;
-			}
-		}
-		else {
-			alive = true;
-			break;
-		}
-	}
-
-	if (!alive) {
-		this->recvSize = -1;
-		return;
-	}
-
-    DWORD totalBytesAvail = 0;
-	int result = this->functions->ioctlsocket(this->ClientSocket, FIONREAD, &totalBytesAvail);
-    if (result != -1 && totalBytesAvail >= 4) {
-
-        ULONG dataLength = 0;
-		if (this->functions->recv(this->ClientSocket, (PCHAR)&dataLength, 4, 0) != -1 && dataLength) {
-            if (dataLength > this->allocaSize) {
-                this->recvData   = (BYTE*)this->functions->LocalReAlloc(this->recvData, dataLength, 0);
-                this->allocaSize = dataLength;
+            NumberOfBytesWritten = this->functions->send(this->ClientSocket, (const char*)(data + index), size, 0);
+            if (NumberOfBytesWritten == -1) {
+                this->recvSize = -1;
+                return;
             }
 
-            ULONG index = 0;
-			int NumberOfBytesRead = 0;
-			while ((NumberOfBytesRead = this->functions->recv(this->ClientSocket, (PCHAR)this->recvData + index, dataLength - index, 0)) && NumberOfBytesRead != -1) {
-                index += NumberOfBytesRead;
-
-                if (index > dataLength) {
-                    this->recvSize = -1;
-                    return;
-                }
-
-                if (index == dataLength)
-                    break;
-			}
-            this->recvSize = index;
-		}
+            index += NumberOfBytesWritten;
+            if (index >= data_size)
+                break;
+        }
     }
+}
+
+void ConnectorTCP::ReceiveData()
+{
+    this->recvSize = 0;
+
+    ULONG dataLength = 0;
+    int recvResult = this->functions->recv(this->ClientSocket, (PCHAR)&dataLength, 4, 0);
+    if (recvResult == 0) {
+        this->recvSize = -1;
+        return;
+    }
+    if (recvResult == -1) {
+        this->recvSize = -1;
+        return;
+    }
+
+    if (dataLength == 0) {
+        this->recvSize = 0;
+        return;
+    }
+
+    if (dataLength > this->allocaSize) {
+        this->recvData   = (BYTE*)this->functions->LocalReAlloc(this->recvData, dataLength, 0);
+        this->allocaSize = dataLength;
+    }
+
+    ULONG index = 0;
+    int NumberOfBytesRead = 0;
+    while (index < dataLength) {
+        NumberOfBytesRead = this->functions->recv(this->ClientSocket, (PCHAR)this->recvData + index, dataLength - index, 0);
+        if (NumberOfBytesRead == 0) {
+            this->recvSize = -1;
+            return;
+        }
+        if (NumberOfBytesRead == -1) {
+            this->recvSize = -1;
+            return;
+        }
+        index += NumberOfBytesRead;
+
+        if (index > dataLength) {
+            this->recvSize = -1;
+            return;
+        }
+    }
+    this->recvSize = index;
 }
 
 BYTE* ConnectorTCP::RecvData()
@@ -273,14 +257,21 @@ void ConnectorTCP::Disconnect()
 
 void ConnectorTCP::Exchange(BYTE* plainData, ULONG plainSize, BYTE* sessionKey)
 {
+    this->recvSize = 0;
+
     if (plainData && plainSize > 0) {
         EncryptRC4(plainData, plainSize, sessionKey, 16);
-        this->SendData(plainData, plainSize);
-    }
-    else {
-        this->SendData(NULL, 0);
     }
 
+
+    this->SendData(plainData, plainSize);
+    if (this->recvSize < 0) {
+        this->connected = FALSE;
+        return;
+    }
+
+
+    this->ReceiveData();
     if (this->recvSize < 0) {
         this->connected = FALSE;
         return;
