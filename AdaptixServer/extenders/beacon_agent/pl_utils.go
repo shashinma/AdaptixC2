@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"compress/zlib"
-	"crypto/rc4"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -204,14 +206,57 @@ func SizeBytesToFormat(bytes int64) string {
 	return fmt.Sprintf("%.2f Kb", size/KB)
 }
 
-func RC4Crypt(data []byte, key []byte) ([]byte, error) {
-	rc4crypt, errcrypt := rc4.NewCipher(key)
-	if errcrypt != nil {
-		return nil, errors.New("rc4 crypt error")
+func Rc4Crypt(data []byte, key []byte) []byte {
+	S := make([]byte, 256)
+	for i := 0; i < 256; i++ {
+		S[i] = byte(i)
 	}
-	decryptData := make([]byte, len(data))
-	rc4crypt.XORKeyStream(decryptData, data)
-	return decryptData, nil
+	j := 0
+	for i := 0; i < 256; i++ {
+		j = (j + int(S[i]) + int(key[i%len(key)])) % 256
+		S[i], S[j] = S[j], S[i]
+	}
+	i, j := 0, 0
+	out := make([]byte, len(data))
+	for k := 0; k < len(data); k++ {
+		i = (i + 1) % 256
+		j = (j + int(S[i])) % 256
+		S[i], S[j] = S[j], S[i]
+		out[k] = data[k] ^ S[(int(S[i])+int(S[j]))%256]
+	}
+	return out
+}
+
+func AesCtrCrypt(data []byte, key []byte, iv []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	stream := cipher.NewCTR(block, iv)
+	out := make([]byte, len(data))
+	stream.XORKeyStream(out, data)
+	return out, nil
+}
+
+func AesCtrEncrypt(data []byte, key []byte) ([]byte, error) {
+	iv := make([]byte, 16)
+	if _, err := rand.Read(iv); err != nil {
+		return nil, err
+	}
+	ciphertext, err := AesCtrCrypt(data, key, iv)
+	if err != nil {
+		return nil, err
+	}
+	return append(iv, ciphertext...), nil
+}
+
+func AesCtrDecrypt(data []byte, key []byte) ([]byte, error) {
+	if len(data) <= 16 {
+		return nil, errors.New("ciphertext too short")
+	}
+	iv := data[:16]
+	ciphertext := data[16:]
+	return AesCtrCrypt(ciphertext, key, iv)
 }
 
 func parseDurationToSeconds(input string) (int, error) {

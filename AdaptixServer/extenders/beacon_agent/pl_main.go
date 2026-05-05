@@ -362,6 +362,13 @@ func (p *PluginAgent) GenerateProfiles(profile adaptix.BuildProfile) ([][]byte, 
 			return nil, err
 		}
 
+		cryptoType := 0 // default RC4
+		if ct, ok := listenerMap["crypto_type"].(string); ok {
+			if ct == "AES" {
+				cryptoType = 1
+			}
+		}
+
 		params = append(params, int(agentWatermark))
 		params = append(params, kill_date)
 		params = append(params, working_time)
@@ -504,12 +511,17 @@ func (p *PluginAgent) GenerateProfiles(profile adaptix.BuildProfile) ([][]byte, 
 			return nil, err
 		}
 
-		cryptParams, err := RC4Crypt(packedParams, encryptKey)
+		var cryptParams []byte
+		if cryptoType == 1 {
+			cryptParams, err = AesCtrEncrypt(packedParams, encryptKey)
+		} else {
+			cryptParams = Rc4Crypt(packedParams, encryptKey)
+		}
 		if err != nil {
 			return nil, err
 		}
 
-		profileArray := []interface{}{len(cryptParams), cryptParams, encryptKey}
+		profileArray := []interface{}{len(cryptParams), cryptoType, cryptParams, encryptKey}
 		packedProfile, err := PackArray(profileArray)
 		if err != nil {
 			return nil, err
@@ -805,13 +817,13 @@ func (p *PluginAgent) CreateAgent(beat []byte) (adaptix.AgentData, adaptix.Exten
 
 func (ext *ExtenderAgent) Encrypt(data []byte, key []byte) ([]byte, error) {
 	/// START CODE
-	return RC4Crypt(data, key)
+	return AesCtrEncrypt(data, key)
 	/// END CODE
 }
 
 func (ext *ExtenderAgent) Decrypt(data []byte, key []byte) ([]byte, error) {
 	/// START CODE
-	return RC4Crypt(data, key)
+	return AesCtrDecrypt(data, key)
 	/// END CODE
 }
 
