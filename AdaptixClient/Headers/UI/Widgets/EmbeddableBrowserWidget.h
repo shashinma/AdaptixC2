@@ -118,11 +118,17 @@ Q_OBJECT
     QString currentProxyHost;
     quint16 currentProxyPort = 0;
 
+    bool m_ownsProfile = false;
+    bool m_proxyApplied = false;
+    static QNetworkProxy s_previousApplicationProxy;
+    static int s_activeProxyBrowserCount;
+
     void createFullUI();
     void createChromelessUI();
     void applyProxy();
     void clearProxy();
     QUrl urlFromUserInput(const QString& input) const;
+    static bool isAllowedUrlScheme(const QUrl& url);
     void loadBookmarks();
     void saveBookmarks();
     void loadHomePage();

@@ -51,7 +51,11 @@
 #include <QMainWindow>
 #include <QCloseEvent>
 #include <QPointer>
+#include <QMutex>
 #include <functional>
+
+QNetworkProxy EmbeddableBrowserWidget::s_previousApplicationProxy = QNetworkProxy::NoProxy;
+int EmbeddableBrowserWidget::s_activeProxyBrowserCount = 0;
 
 namespace AdaptixBrowserFloatingDetail {
 
@@ -234,6 +238,21 @@ public:
 
 static const QString kBrowserProxyTunnelCustomMarker = QStringLiteral("__adaptix_proxy_tunnel_custom__");
 
+static QString sanitizeBrowserLogicalId(const QString& id)
+{
+    QString s = id.trimmed();
+    if (s.isEmpty())
+        return QStringLiteral("default");
+    // Replace any character that is unsafe for filesystem paths or Qt WebEngine profile names
+    for (QChar& c : s) {
+        if (!c.isLetterOrNumber() && c != QLatin1Char('-') && c != QLatin1Char('_'))
+            c = QLatin1Char('_');
+    }
+    if (s.length() > 64)
+        s = s.left(64);
+    return s;
+}
+
 static QString normalizeTunnelBindHostForClient(const QString& iface)
 {
     const QString s = iface.trimmed();
@@ -386,6 +405,17 @@ EmbeddableBrowserWidget::~EmbeddableBrowserWidget()
             win->takeCentralWidget();
             win->deleteLater();
         }
+    }
+
+    clearProxy();
+
+    // Clean up owned QWebEngineProfile (must happen after all pages using it are gone)
+    if (m_ownsProfile && browserSharedProfile) {
+        if (webView && webView->page() && webView->page()->profile() == browserSharedProfile) {
+            webView->setPage(nullptr);
+        }
+        delete browserSharedProfile;
+        browserSharedProfile = nullptr;
     }
 }
 
@@ -904,16 +934,22 @@ QWebEnginePage* EmbeddableBrowserWidget::createNewTabPage()
     auto* view = new QWebEngineView(tabPage);
     view->setContextMenuPolicy(Qt::DefaultContextMenu);
     layout->addWidget(view);
-    auto* page = new BrowserPage(browserSharedProfile, view, devToolsView ? devToolsView->page() : nullptr, this, view);
-    view->setPage(page);
-    if (devToolsVisible && devToolsView && devToolsView->page())
-        page->setDevToolsPage(devToolsView->page());
+    {
+        QWebEnginePage* oldPage = view->page();
+        auto* page = new BrowserPage(browserSharedProfile, view, devToolsView ? devToolsView->page() : nullptr, this, view);
+        view->setPage(page);
+        delete oldPage;
+    }
+    if (devToolsVisible && devToolsView && devToolsView->page()) {
+        if (auto* newPage = view->page())
+            newPage->setDevToolsPage(devToolsView->page());
+    }
     browserTabStack->addWidget(tabPage);
     browserTabBar->addTab(tr("New tab"));
     browserTabBar->setCurrentIndex(browserTabBar->count() - 1);
     webView = view;
     connectViewSignals(view);
-    return page;
+    return view->page();
 }
 
 void EmbeddableBrowserWidget::syncDevToolsToCurrentTab()
@@ -1003,6 +1039,16 @@ void EmbeddableBrowserWidget::applyProxy()
         return;
     }
 
+    if (m_proxyApplied)
+        return;
+
+    // Save previous application proxy on first browser activation
+    if (s_activeProxyBrowserCount == 0) {
+        s_previousApplicationProxy = QNetworkProxy::applicationProxy();
+    }
+    s_activeProxyBrowserCount++;
+    m_proxyApplied = true;
+
     QNetworkProxy proxy;
     proxy.setType(currentProxyType);
     proxy.setHostName(currentProxyHost);
@@ -1013,7 +1059,31 @@ void EmbeddableBrowserWidget::applyProxy()
 
 void EmbeddableBrowserWidget::clearProxy()
 {
-    QNetworkProxy::setApplicationProxy(QNetworkProxy::NoProxy);
+    if (!m_proxyApplied)
+        return;
+    m_proxyApplied = false;
+
+    if (s_activeProxyBrowserCount > 0) {
+        s_activeProxyBrowserCount--;
+        if (s_activeProxyBrowserCount == 0) {
+            QNetworkProxy::setApplicationProxy(s_previousApplicationProxy);
+        }
+    } else {
+        QNetworkProxy::setApplicationProxy(QNetworkProxy::NoProxy);
+    }
+}
+
+bool EmbeddableBrowserWidget::isAllowedUrlScheme(const QUrl& url)
+{
+    const QString scheme = url.scheme().toLower();
+    return scheme.isEmpty()
+        || scheme == QStringLiteral("http")
+        || scheme == QStringLiteral("https")
+        || scheme == QStringLiteral("ftp")
+        || scheme == QStringLiteral("ftps")
+        || scheme == QStringLiteral("file")
+        || scheme == QStringLiteral("adaptix-browser")
+        || scheme == QStringLiteral("about");
 }
 
 QUrl EmbeddableBrowserWidget::urlFromUserInput(const QString& input) const
@@ -1022,19 +1092,33 @@ QUrl EmbeddableBrowserWidget::urlFromUserInput(const QString& input) const
     if (trimmed.isEmpty())
         return QUrl();
 
-    if (!trimmed.contains(".") && !trimmed.startsWith("http") && !trimmed.startsWith("file")) {
-        return QUrl("https://www.google.com/search?q=" + QUrl::toPercentEncoding(trimmed));
+    // Allow internal and about schemes directly without search-engine redirection
+    if (trimmed.startsWith(QStringLiteral("adaptix-browser:"), Qt::CaseInsensitive)
+        || trimmed.startsWith(QStringLiteral("about:"), Qt::CaseInsensitive)) {
+        QUrl url(trimmed);
+        if (isAllowedUrlScheme(url))
+            return url;
+        return QUrl();
+    }
+
+    if (!trimmed.contains(".") && !trimmed.startsWith(QStringLiteral("http"), Qt::CaseInsensitive)
+        && !trimmed.startsWith(QStringLiteral("ftp"), Qt::CaseInsensitive)
+        && !trimmed.startsWith(QStringLiteral("ftps"), Qt::CaseInsensitive)
+        && !trimmed.startsWith(QStringLiteral("file"), Qt::CaseInsensitive)) {
+        return QUrl(QStringLiteral("https://www.google.com/search?q=") + QString::fromUtf8(QUrl::toPercentEncoding(trimmed)));
     }
 
     QUrl url(trimmed);
+    if (!isAllowedUrlScheme(url))
+        return QUrl();
     if (url.scheme().isEmpty())
-        url.setScheme("https");
+        url.setScheme(QStringLiteral("https"));
     return url;
 }
 
 void EmbeddableBrowserWidget::loadUrl(const QUrl& url)
 {
-    if (!url.isValid() || url.isEmpty())
+    if (!url.isValid() || url.isEmpty() || !isAllowedUrlScheme(url))
         return;
 
     applyProxy();
@@ -1049,8 +1133,13 @@ void EmbeddableBrowserWidget::loadUrl(const QString& url)
 
 void EmbeddableBrowserWidget::setProxy(QNetworkProxy::ProxyType type, const QString& host, quint16 port)
 {
+    const QString trimmedHost = host.trimmed();
+    if (currentProxyType == type && currentProxyHost == trimmedHost && currentProxyPort == port)
+        return;
+
+    clearProxy();
     currentProxyType = type;
-    currentProxyHost = host.trimmed();
+    currentProxyHost = trimmedHost;
     currentProxyPort = port;
 
     if (isFullBrowserChrome() && proxyCombo && proxyHostEdit && proxyPortEdit) {
@@ -1151,9 +1240,12 @@ void EmbeddableBrowserWidget::onProxyApply()
 {
     if (!proxyCombo || !proxyHostEdit || !proxyPortEdit)
         return;
+    clearProxy();
     currentProxyType = static_cast<QNetworkProxy::ProxyType>(proxyCombo->currentData().toInt());
     currentProxyHost = proxyHostEdit->text().trimmed();
-    currentProxyPort = static_cast<quint16>(proxyPortEdit->text().toUInt());
+    bool ok = false;
+    const uint portVal = proxyPortEdit->text().toUInt(&ok);
+    currentProxyPort = (ok && portVal <= 65535u) ? static_cast<quint16>(portVal) : static_cast<quint16>(0);
 
     applyProxy();
     if (QWebEngineView* v = currentWebView())
