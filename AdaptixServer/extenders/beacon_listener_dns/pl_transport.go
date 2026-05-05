@@ -93,38 +93,58 @@ func (t *TransportDNS) Start(ts Teamserver) error {
 
 	t.udpServer = &dns.Server{Addr: addr, Net: "udp", Handler: mux}
 	t.tcpServer = &dns.Server{Addr: addr, Net: "tcp", Handler: mux}
+
+	t.mu.Lock()
 	t.Active = true
+	t.mu.Unlock()
 
-	var start_error error = nil
+	var wg sync.WaitGroup
+	errCh := make(chan error, 2)
 
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		err := t.udpServer.ListenAndServe()
 		if err != nil {
-			start_error = err
+			errCh <- err
+			t.mu.Lock()
 			t.Active = false
+			t.mu.Unlock()
 			fmt.Printf("[BeaconDNS] UDP listener error: %v\n", err)
 		}
 	}()
 
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		err := t.tcpServer.ListenAndServe()
 		if err != nil {
-			start_error = err
+			errCh <- err
+			t.mu.Lock()
 			t.Active = false
+			t.mu.Unlock()
 			fmt.Printf("[BeaconDNS] TCP listener error: %v\n", err)
 		}
 	}()
 
 	go t.cleanupLoop()
 
-	time.Sleep(500 * time.Millisecond)
+	wg.Wait()
+	close(errCh)
 
-	return start_error
+	for err := range errCh {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (t *TransportDNS) Stop() error {
 
+	t.mu.Lock()
 	t.Active = false
+	t.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
@@ -150,44 +170,50 @@ func (t *TransportDNS) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	m.SetReply(r)
 	m.Authoritative = true
 
+	// Reject multi-question queries to avoid amplification / fingerprinting
+	if len(r.Question) != 1 {
+		m.Rcode = dns.RcodeRefused
+		_ = w.WriteMsg(m)
+		return
+	}
+
 	baseTTL := uint32(t.Config.TTL)
 	if baseTTL == 0 {
 		baseTTL = 10
 	}
 	ttl := baseTTL + uint32(t.rng.IntN(60))
 
-	for _, q := range r.Question {
-		req := t.parseRequest(q)
+	q := r.Question[0]
+	req := t.parseRequest(q)
 
-		switch req.op {
-		case "HI":
-			if len(req.data) > 0 {
-				t.handleHI(req, w)
-			}
-			m.Answer = append(m.Answer, t.buildAckResponse(req, ttl))
-
-		case "PUT":
-			var ack putAckInfo
-			if len(req.data) > 0 {
-				ack = t.handlePUT(req)
-			}
-			m.Answer = append(m.Answer, t.buildPutAckResponse(req, ack, ttl))
-
-		case "GET":
-			frame := t.handleGET(req, w)
-			m.Answer = append(m.Answer, t.buildDataResponse(req, frame, ttl))
-
-		case "HB":
-			needsReset, hasPendingTasks := t.handleHB(req)
-			m.Answer = append(m.Answer, t.buildHBResponse(req, needsReset, hasPendingTasks, ttl))
-
-		default:
-			answ := &dns.TXT{
-				Hdr: dns.RR_Header{Name: req.qname, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: ttl},
-				Txt: []string{"OK"},
-			}
-			m.Answer = append(m.Answer, answ)
+	switch req.op {
+	case "HI":
+		if len(req.data) > 0 {
+			t.handleHI(req, w)
 		}
+		m.Answer = append(m.Answer, t.buildAckResponse(req, ttl))
+
+	case "PUT":
+		var ack putAckInfo
+		if len(req.data) > 0 {
+			ack = t.handlePUT(req)
+		}
+		m.Answer = append(m.Answer, t.buildPutAckResponse(req, ack, ttl))
+
+	case "GET":
+		frame := t.handleGET(req, w)
+		m.Answer = append(m.Answer, t.buildDataResponse(req, frame, ttl))
+
+	case "HB":
+		needsReset, hasPendingTasks := t.handleHB(req)
+		m.Answer = append(m.Answer, t.buildHBResponse(req, needsReset, hasPendingTasks, ttl))
+
+	default:
+		answ := &dns.TXT{
+			Hdr: dns.RR_Header{Name: req.qname, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: ttl},
+			Txt: []string{"OK"},
+		}
+		m.Answer = append(m.Answer, answ)
 	}
 
 	_ = w.WriteMsg(m)
@@ -343,7 +369,12 @@ func (t *TransportDNS) handleHB(req *dnsRequest) (needsReset bool, hasPendingTas
 		taskData, taskNonce := t.fetchOrRetryTasks(req.sid)
 		if len(taskData) > 0 {
 			t.mu.Lock()
-			t.downFrags[req.sid] = newDownBuf(taskData, taskNonce)
+			// Another goroutine may have created the buffer while we fetched tasks
+			if existingDf, exists := t.downFrags[req.sid]; exists && existingDf != nil {
+				df = existingDf
+			} else {
+				t.downFrags[req.sid] = newDownBuf(taskData, taskNonce)
+			}
 			t.mu.Unlock()
 			hasPendingTasks = true
 		}
@@ -429,7 +460,7 @@ func (t *TransportDNS) handlePutFragment(sid string, seq int, data []byte, ack p
 	}
 
 	if len(data) == 0 || len(data) <= 8 {
-		_ = Ts.TsAgentProcessData(sid, data)
+		// Too short to be a valid fragment; silently ignore
 		return ack
 	}
 
@@ -462,7 +493,7 @@ func (t *TransportDNS) handlePutFragment(sid string, seq int, data []byte, ack p
 		}
 
 		if len(rest) <= 8 {
-			_ = Ts.TsAgentProcessData(sid, rest)
+			// Meta present but no actual payload after total/offset header
 			return ack
 		}
 		total = binary.BigEndian.Uint32(rest[0:4])
@@ -483,7 +514,7 @@ func (t *TransportDNS) handlePutFragment(sid string, seq int, data []byte, ack p
 	ack.total = total
 
 	if offset == 0 && total <= uint32(len(chunk)) {
-		_ = Ts.TsAgentProcessData(sid, decompressUpstream(chunk))
+		_ = Ts.TsAgentProcessData(sid, chunk)
 		ack.complete = true
 		ack.filled = total
 		ack.lastReceivedOff = 0
@@ -534,7 +565,15 @@ func (t *TransportDNS) handlePutFragment(sid string, seq int, data []byte, ack p
 	copy(fb.buf[offset:end], chunk[:n])
 
 	fb.seenOffsets[offset] = true
-	fb.filled += n
+	// Count only newly-received bytes to handle overlapping chunks correctly
+	newBytes := uint32(0)
+	for i := offset; i < end; i++ {
+		if !fb.filledMap[i] {
+			fb.filledMap[i] = true
+			newBytes++
+		}
+	}
+	fb.filled += newBytes
 	fb.lastReceivedOff = offset
 	fb.expectedOff = end
 	fb.lastUpdate = time.Now()
@@ -563,7 +602,7 @@ func (t *TransportDNS) handlePutFragment(sid string, seq int, data []byte, ack p
 
 	// Process data outside of lock to avoid blocking other goroutines
 	if completeBuf != nil {
-		_ = Ts.TsAgentProcessData(sid, decompressUpstream(completeBuf))
+		_ = Ts.TsAgentProcessData(sid, completeBuf)
 	}
 
 	return ack
@@ -577,7 +616,7 @@ func (t *TransportDNS) buildResponseChunk(df *dnsDownBuf, reqOffset uint32, isTC
 	}
 
 	if reqOffset >= df.total {
-		reqOffset = 0
+		return nil
 	}
 
 	maxChunk := t.Config.PktSize
@@ -722,7 +761,7 @@ func (t *TransportDNS) buildDataResponse(req *dnsRequest, frame []byte, ttl uint
 	if len(frame) == 0 {
 		return &dns.TXT{
 			Hdr: dns.RR_Header{Name: req.qname, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: ttl},
-			Txt: []string{""},
+			Txt: []string{"OK"},
 		}
 	}
 
@@ -745,13 +784,13 @@ func (t *TransportDNS) buildDataResponse(req *dnsRequest, frame []byte, ttl uint
 func (t *TransportDNS) fetchOrRetryTasks(sid string) ([]byte, uint32) {
 	t.mu.Lock()
 	existingInflight, hasInflight := t.localInflights[sid]
-	t.mu.Unlock()
-
 	if hasInflight && existingInflight != nil {
 		existingInflight.attempts++
 		existingInflight.createdAt = time.Now()
+		t.mu.Unlock()
 		return existingInflight.data, existingInflight.nonce
 	}
+	t.mu.Unlock()
 
 	maxDataSize := t.Config.PktSize * 256
 	if maxDataSize <= 0 || maxDataSize > maxDownloadSize {
@@ -775,30 +814,12 @@ func (t *TransportDNS) fetchOrRetryTasks(sid string) ([]byte, uint32) {
 	return taskData, taskNonce
 }
 
-func (t *TransportDNS) ackDelivery(sid string, ackTaskNonce uint32) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
 
-	df, hasDf := t.downFrags[sid]
-	if !hasDf || df == nil {
-		return
-	}
 
-	if ackTaskNonce == df.taskNonce || ackTaskNonce == 0 {
-		delete(t.localInflights, sid)
-		delete(t.downFrags, sid)
-	}
-}
-
-// computeNextExpectedOffset finds the next missing offset based on chunk size
+// computeNextExpectedOffset finds the next missing byte offset
 func (t *TransportDNS) computeNextExpectedOffset(fb *dnsFragBuf) uint32 {
-	if fb.chunkSize == 0 {
-		return fb.highWater
-	}
-
-	// Scan from start to find first gap
-	for off := uint32(0); off < fb.total; off += fb.chunkSize {
-		if !fb.seenOffsets[off] {
+	for off := uint32(0); off < fb.total; off++ {
+		if !fb.filledMap[off] {
 			return off
 		}
 	}
@@ -811,7 +832,13 @@ func (t *TransportDNS) cleanupLoop() {
 	ticker := time.NewTicker(cleanupInterval)
 	defer ticker.Stop()
 
-	for t.Active {
+	for {
+		t.mu.Lock()
+		active := t.Active
+		t.mu.Unlock()
+		if !active {
+			break
+		}
 		select {
 		case <-ticker.C:
 			t.cleanupStaleEntries()
@@ -846,10 +873,9 @@ func (t *TransportDNS) cleanupStaleEntries() {
 		}
 	}
 
-	for _, inf := range t.localInflights {
+	for sid, inf := range t.localInflights {
 		if now.Sub(inf.createdAt) > inflightTimeout {
-			inf.createdAt = now
-			inf.attempts = 0
+			delete(t.localInflights, sid)
 		}
 	}
 }
@@ -887,6 +913,7 @@ type dnsFragBuf struct {
 	lastReceivedOff uint32
 	nextExpectedOff uint32
 	chunkSize       uint32
+	filledMap       []bool // tracks exactly which bytes have been received
 }
 
 type dnsDownBuf struct {
@@ -939,6 +966,7 @@ func newFragBuf(total uint32) *dnsFragBuf {
 	fb := new(dnsFragBuf)
 	fb.total = total
 	fb.buf = make([]byte, total)
+	fb.filledMap = make([]bool, total)
 	fb.lastUpdate = time.Now()
 	fb.seenOffsets = make(map[uint32]bool)
 	fb.lastReceivedOff = 0
@@ -979,11 +1007,11 @@ func rc4Crypt(data []byte, keyHex string) []byte {
 	}
 	keyBytes, err := hex.DecodeString(keyHex)
 	if err != nil || len(keyBytes) != 16 {
-		return data
+		return nil
 	}
 	cipher, err := rc4.NewCipher(keyBytes)
 	if err != nil {
-		return data
+		return nil
 	}
 	result := make([]byte, len(data))
 	cipher.XORKeyStream(result, data)
@@ -1027,33 +1055,6 @@ func compressPayload(data []byte) (payload []byte, flags byte) {
 		return compressed, 1
 	}
 	return data, 0
-}
-
-func decompressUpstream(data []byte) []byte {
-	if len(data) <= 5 {
-		return data
-	}
-
-	flags := data[0]
-	origLen := binary.LittleEndian.Uint32(data[1:5])
-	payload := data[5:]
-
-	if (flags & 0x1) != 0 {
-		if origLen > 0 && origLen <= maxUploadSize {
-			zr, err := zlib.NewReader(bytes.NewReader(payload))
-			if err == nil {
-				decompressed := make([]byte, origLen)
-				n, errRead := zr.Read(decompressed)
-				zr.Close()
-				if errRead == nil || (n > 0 && n == int(origLen)) {
-					return decompressed[:n]
-				}
-			}
-		}
-	} else if origLen > 0 && origLen <= uint32(len(payload)) {
-		return payload[:origLen]
-	}
-	return data
 }
 
 func buildTaskFrame(payload []byte, nonce uint32, flags byte, origLen int) []byte {

@@ -152,10 +152,14 @@ func (l *Listener) Edit(config string) (adaptix.ListenerData, []byte, error) {
 		}
 	}
 	if conf.TTL != 0 {
-		l.transport.Config.TTL = conf.TTL
+		if conf.TTL > 0 && conf.TTL <= 86400 {
+			l.transport.Config.TTL = conf.TTL
+		}
 	}
 	if conf.PktSize != 0 {
-		l.transport.Config.PktSize = conf.PktSize
+		if conf.PktSize > 0 && conf.PktSize <= 64000 {
+			l.transport.Config.PktSize = conf.PktSize
+		}
 	}
 	if conf.BurstSleep > 0 {
 		l.transport.Config.BurstSleep = conf.BurstSleep
