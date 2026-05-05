@@ -14,6 +14,7 @@ type TransportConfig struct {
 	Port       int    `json:"port_bind"`
 	Prepend    string `json:"prepend_data"`
 	EncryptKey string `json:"encrypt_key"`
+	CryptoType string `json:"crypto_type"`
 
 	Protocol string `json:"protocol"`
 }

@@ -2,7 +2,8 @@ package main
 
 import (
 	"bytes"
-	"crypto/rc4"
+	"crypto/aes"
+	"crypto/cipher"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -163,17 +164,23 @@ func (l *Listener) InternalHandler(data []byte) (string, error) {
 
 	/// START CODE HERE
 
-	encKey, err := hex.DecodeString(l.transport.Config.EncryptKey)
-	if err != nil {
-		return "", err
+	if len(data) < 4+16+8 {
+		return "", fmt.Errorf("beat too short")
 	}
-	rc4crypt, err := rc4.NewCipher(encKey)
-	if err != nil {
-		return "", err
+	encKey, err := hex.DecodeString(l.transport.Config.EncryptKey)
+	if err != nil || len(encKey) != 16 {
+		return "", fmt.Errorf("invalid key")
 	}
 
-	agentInfo := make([]byte, len(data))
-	rc4crypt.XORKeyStream(agentInfo, data)
+	var agentInfo []byte
+	if l.transport.Config.CryptoType == "AES" {
+		agentInfo, err = aesCtrDecryptWithIV(data[4:], encKey)
+		if err != nil {
+			return "", err
+		}
+	} else {
+		agentInfo = rc4Crypt(data[4:], encKey)
+	}
 
 	agentType := fmt.Sprintf("%08x", uint(binary.BigEndian.Uint32(agentInfo[:4])))
 	agentInfo = agentInfo[4:]
@@ -190,6 +197,23 @@ func (l *Listener) InternalHandler(data []byte) (string, error) {
 	/// END CODE HERE
 
 	return agentId, nil
+}
+
+func aesCtrDecryptWithIV(data []byte, key []byte) ([]byte, error) {
+	if len(data) < 16 {
+		return nil, fmt.Errorf("data too short for IV")
+	}
+	if len(key) != 16 {
+		return nil, fmt.Errorf("invalid key size for AES-128")
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	stream := cipher.NewCTR(block, data[:16])
+	decrypted := make([]byte, len(data)-16)
+	stream.XORKeyStream(decrypted, data[16:])
+	return decrypted, nil
 }
 
 /// UTILS
@@ -236,4 +260,25 @@ func unescapeString(s string) string {
 		}
 	}
 	return string(result)
+}
+
+func rc4Crypt(data []byte, key []byte) []byte {
+	S := make([]byte, 256)
+	for i := 0; i < 256; i++ {
+		S[i] = byte(i)
+	}
+	j := 0
+	for i := 0; i < 256; i++ {
+		j = (j + int(S[i]) + int(key[i%len(key)])) % 256
+		S[i], S[j] = S[j], S[i]
+	}
+	i, j := 0, 0
+	out := make([]byte, len(data))
+	for k := 0; k < len(data); k++ {
+		i = (i + 1) % 256
+		j = (j + int(S[i])) % 256
+		S[i], S[j] = S[j], S[i]
+		out[k] = data[k] ^ S[(int(S[i])+int(S[j]))%256]
+	}
+	return out
 }

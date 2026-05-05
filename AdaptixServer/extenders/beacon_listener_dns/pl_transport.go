@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"compress/zlib"
 	"context"
-	"crypto/rc4"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"encoding/base32"
 	"encoding/base64"
 	"encoding/binary"
@@ -12,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	mrand "math/rand/v2"
 	"net"
 	"regexp"
@@ -43,6 +46,10 @@ type TransportDNS struct {
 	localInflights map[string]*localInflight
 	needsReset     map[string]bool
 	rng            *mrand.Rand
+
+	// Rate limiting per source IP
+	rateMu      sync.Mutex
+	rateLimiter map[string][]time.Time
 }
 
 type TransportConfig struct { // DNSConfig
@@ -53,6 +60,7 @@ type TransportConfig struct { // DNSConfig
 	PktSize      int      `json:"pkt_size"`
 	TTL          int      `json:"ttl"`
 	EncryptKey   string   `json:"encrypt_key"`
+	CryptoType   string   `json:"crypto_type"`
 	Protocol     string   `json:"protocol"`
 	BurstEnabled bool     `json:"burst_enabled"`
 	BurstSleep   int      `json:"burst_sleep"`
@@ -95,12 +103,12 @@ func (t *TransportDNS) Start(ts Teamserver) error {
 	t.tcpServer = &dns.Server{Addr: addr, Net: "tcp", Handler: mux}
 	t.Active = true
 
-	var start_error error = nil
+	startErrCh := make(chan error, 2)
 
 	go func() {
 		err := t.udpServer.ListenAndServe()
 		if err != nil {
-			start_error = err
+			startErrCh <- err
 			t.Active = false
 			fmt.Printf("[BeaconDNS] UDP listener error: %v\n", err)
 		}
@@ -109,7 +117,7 @@ func (t *TransportDNS) Start(ts Teamserver) error {
 	go func() {
 		err := t.tcpServer.ListenAndServe()
 		if err != nil {
-			start_error = err
+			startErrCh <- err
 			t.Active = false
 			fmt.Printf("[BeaconDNS] TCP listener error: %v\n", err)
 		}
@@ -117,9 +125,12 @@ func (t *TransportDNS) Start(ts Teamserver) error {
 
 	go t.cleanupLoop()
 
-	time.Sleep(500 * time.Millisecond)
-
-	return start_error
+	select {
+	case err := <-startErrCh:
+		return err
+	case <-time.After(500 * time.Millisecond):
+		return nil
+	}
 }
 
 func (t *TransportDNS) Stop() error {
@@ -146,6 +157,15 @@ func (t *TransportDNS) Stop() error {
 /// HANDLERS
 
 func (t *TransportDNS) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
+	// Rate limiting check
+	remoteAddr := w.RemoteAddr().String()
+	if host, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		remoteAddr = host
+	}
+	if !t.checkRateLimit(remoteAddr) {
+		return
+	}
+
 	m := new(dns.Msg)
 	m.SetReply(r)
 	m.Authoritative = true
@@ -198,16 +218,21 @@ func (t *TransportDNS) parseRequest(q dns.Question) *dnsRequest {
 	base := labels
 
 	if len(t.Config.Domains) > 0 {
-		for i := range labels {
-			tail := strings.ToLower(strings.Join(labels[i:], "."))
-			for _, dom := range t.Config.Domains {
-				if tail == dom {
-					base = labels[:i]
+		for _, dom := range t.Config.Domains {
+			domLabels := dns.SplitDomainName(dom)
+			if len(labels) >= len(domLabels) {
+				match := true
+				offset := len(labels) - len(domLabels)
+				for j := 0; j < len(domLabels); j++ {
+					if !strings.EqualFold(labels[offset+j], domLabels[j]) {
+						match = false
+						break
+					}
+				}
+				if match {
+					base = labels[:offset]
 					break
 				}
-			}
-			if len(base) < len(labels) {
-				break
 			}
 		}
 	}
@@ -266,16 +291,24 @@ func (t *TransportDNS) handleHI(req *dnsRequest, w dns.ResponseWriter) {
 
 	keyBytes, err := hex.DecodeString(t.Config.EncryptKey)
 	if err != nil || len(keyBytes) != 16 {
+		log.Printf("[BeaconDNS] handleHI: invalid encrypt_key")
 		return
 	}
 
-	cipher, err := rc4.NewCipher(keyBytes)
-	if err != nil {
-		return
+	var fullBeat []byte
+	if t.Config.CryptoType == "AES" {
+		if len(req.data) < 16+8 {
+			log.Printf("[BeaconDNS] handleHI: beat too short")
+			return
+		}
+		fullBeat, err = aesCtrDecrypt(req.data, t.Config.EncryptKey)
+		if err != nil {
+			log.Printf("[BeaconDNS] handleHI: AES decrypt failed: %v", err)
+			return
+		}
+	} else {
+		fullBeat = rc4Crypt(req.data, t.Config.EncryptKey)
 	}
-
-	fullBeat := make([]byte, len(req.data))
-	cipher.XORKeyStream(fullBeat, req.data)
 
 	if len(fullBeat) < 8 {
 		return
@@ -287,14 +320,20 @@ func (t *TransportDNS) handleHI(req *dnsRequest, w dns.ResponseWriter) {
 
 	if !Ts.TsAgentIsExists(agentId) {
 		externalIP := "" // extractExternalIP(w.RemoteAddr())
-		_, _ = Ts.TsAgentCreate(agentType, agentId, beat, t.Name, externalIP, true)
+		if _, err := Ts.TsAgentCreate(agentType, agentId, beat, t.Name, externalIP, true); err != nil {
+			log.Printf("[BeaconDNS] TsAgentCreate error for %s: %v", agentId, err)
+		}
 	}
-	_ = Ts.TsAgentSetTick(agentId, t.Name)
+	if err := Ts.TsAgentSetTick(agentId, t.Name); err != nil {
+		log.Printf("[BeaconDNS] TsAgentSetTick error for %s: %v", agentId, err)
+	}
 }
 
 func (t *TransportDNS) handleHB(req *dnsRequest) (needsReset bool, hasPendingTasks bool) {
 	if req.sid != "" {
-		_ = Ts.TsAgentSetTick(req.sid, t.Name)
+		if err := Ts.TsAgentSetTick(req.sid, t.Name); err != nil {
+			log.Printf("[BeaconDNS] TsAgentSetTick error in HB for %s: %v", req.sid, err)
+		}
 	}
 
 	t.mu.Lock()
@@ -304,7 +343,17 @@ func (t *TransportDNS) handleHB(req *dnsRequest) (needsReset bool, hasPendingTas
 	}
 	t.mu.Unlock()
 
-	decrypted := rc4Crypt(req.data, t.Config.EncryptKey)
+	var decrypted []byte
+	var err error
+	if t.Config.CryptoType == "AES" {
+		decrypted, err = aesCtrDecrypt(req.data, t.Config.EncryptKey)
+		if err != nil {
+			log.Printf("[BeaconDNS] handleHB: decrypt failed: %v", err)
+			return needsReset, hasPendingTasks
+		}
+	} else {
+		decrypted = rc4Crypt(req.data, t.Config.EncryptKey)
+	}
 
 	var ackOffset, ackTaskNonce uint32
 	if len(decrypted) >= 4 {
@@ -356,10 +405,22 @@ func (t *TransportDNS) handleHB(req *dnsRequest) (needsReset bool, hasPendingTas
 
 func (t *TransportDNS) handleGET(req *dnsRequest, w dns.ResponseWriter) []byte {
 	if req.sid != "" {
-		_ = Ts.TsAgentSetTick(req.sid, t.Name)
+		if err := Ts.TsAgentSetTick(req.sid, t.Name); err != nil {
+			log.Printf("[BeaconDNS] TsAgentSetTick error in GET for %s: %v", req.sid, err)
+		}
 	}
 
-	decrypted := rc4Crypt(req.data, t.Config.EncryptKey)
+	var decrypted []byte
+	var err error
+	if t.Config.CryptoType == "AES" {
+		decrypted, err = aesCtrDecrypt(req.data, t.Config.EncryptKey)
+		if err != nil {
+			log.Printf("[BeaconDNS] handleGET: decrypt failed: %v", err)
+			return nil
+		}
+	} else {
+		decrypted = rc4Crypt(req.data, t.Config.EncryptKey)
+	}
 
 	var reqOffset uint32
 	if len(decrypted) >= 4 {
@@ -412,11 +473,23 @@ func (t *TransportDNS) handlePUT(req *dnsRequest) putAckInfo {
 	}
 	t.mu.Unlock()
 
-	decrypted := rc4Crypt(req.data, t.Config.EncryptKey)
+	var decrypted []byte
+	var err error
+	if t.Config.CryptoType == "AES" {
+		decrypted, err = aesCtrDecrypt(req.data, t.Config.EncryptKey)
+		if err != nil {
+			log.Printf("[BeaconDNS] handlePUT: decryption failed for %s: %v", req.sid, err)
+			return ack
+		}
+	} else {
+		decrypted = rc4Crypt(req.data, t.Config.EncryptKey)
+	}
 	ack = t.handlePutFragment(req.sid, req.seq, decrypted, ack)
 
 	if req.sid != "" {
-		_ = Ts.TsAgentSetTick(req.sid, t.Name)
+		if err := Ts.TsAgentSetTick(req.sid, t.Name); err != nil {
+			log.Printf("[BeaconDNS] TsAgentSetTick error in PUT for %s: %v", req.sid, err)
+		}
 	}
 	return ack
 }
@@ -429,7 +502,9 @@ func (t *TransportDNS) handlePutFragment(sid string, seq int, data []byte, ack p
 	}
 
 	if len(data) == 0 || len(data) <= 8 {
-		_ = Ts.TsAgentProcessData(sid, data)
+		if err := Ts.TsAgentProcessData(sid, data); err != nil {
+			log.Printf("[BeaconDNS] TsAgentProcessData error for %s: %v", sid, err)
+		}
 		return ack
 	}
 
@@ -563,7 +638,9 @@ func (t *TransportDNS) handlePutFragment(sid string, seq int, data []byte, ack p
 
 	// Process data outside of lock to avoid blocking other goroutines
 	if completeBuf != nil {
-		_ = Ts.TsAgentProcessData(sid, decompressUpstream(completeBuf))
+		if err := Ts.TsAgentProcessData(sid, decompressUpstream(completeBuf)); err != nil {
+			log.Printf("[BeaconDNS] TsAgentProcessData error for %s: %v", sid, err)
+		}
 	}
 
 	return ack
@@ -722,11 +799,24 @@ func (t *TransportDNS) buildDataResponse(req *dnsRequest, frame []byte, ttl uint
 	if len(frame) == 0 {
 		return &dns.TXT{
 			Hdr: dns.RR_Header{Name: req.qname, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: ttl},
-			Txt: []string{""},
+			Txt: []string{"OK"},
 		}
 	}
 
-	encrypted := rc4Crypt(frame, t.Config.EncryptKey)
+	var encrypted []byte
+	var err error
+	if t.Config.CryptoType == "AES" {
+		encrypted, err = aesCtrEncrypt(frame, t.Config.EncryptKey)
+		if err != nil {
+			log.Printf("[BeaconDNS] buildDataResponse: encryption failed: %v", err)
+			return &dns.TXT{
+				Hdr: dns.RR_Header{Name: req.qname, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: ttl},
+				Txt: []string{"OK"},
+			}
+		}
+	} else {
+		encrypted = rc4Crypt(frame, t.Config.EncryptKey)
+	}
 	b64Str := base64.StdEncoding.EncodeToString(encrypted)
 
 	var chunks []string
@@ -759,11 +849,23 @@ func (t *TransportDNS) fetchOrRetryTasks(sid string) ([]byte, uint32) {
 	}
 
 	p, err := Ts.TsAgentGetHostedAll(sid, maxDataSize)
-	if err != nil || len(p) == 0 {
+	if err != nil {
+		log.Printf("[BeaconDNS] TsAgentGetHostedAll error for %s: %v", sid, err)
+		return nil, 0
+	}
+	if len(p) == 0 {
 		return nil, 0
 	}
 
-	taskNonce := uint32(time.Now().UnixNano()&0xFFFFFFFF) ^ t.rng.Uint32()
+	var nonceBytes [4]byte
+	if _, err := rand.Read(nonceBytes[:]); err != nil {
+		log.Printf("[BeaconDNS] crypto/rand failed, falling back to math/rand")
+		nonceBytes[0] = byte(t.rng.Uint32())
+		nonceBytes[1] = byte(t.rng.Uint32() >> 8)
+		nonceBytes[2] = byte(t.rng.Uint32() >> 16)
+		nonceBytes[3] = byte(t.rng.Uint32() >> 24)
+	}
+	taskNonce := binary.BigEndian.Uint32(nonceBytes[:])
 	origLen := len(p)
 	payload, flags := compressPayload(p)
 	taskData := buildTaskFrame(payload, taskNonce, flags, origLen)
@@ -815,6 +917,7 @@ func (t *TransportDNS) cleanupLoop() {
 		select {
 		case <-ticker.C:
 			t.cleanupStaleEntries()
+			t.cleanupRateLimit()
 		}
 	}
 }
@@ -850,6 +953,49 @@ func (t *TransportDNS) cleanupStaleEntries() {
 		if now.Sub(inf.createdAt) > inflightTimeout {
 			inf.createdAt = now
 			inf.attempts = 0
+		}
+	}
+}
+
+// Rate limiting: max 60 requests per minute per IP
+func (t *TransportDNS) checkRateLimit(ip string) bool {
+	t.rateMu.Lock()
+	defer t.rateMu.Unlock()
+
+	now := time.Now()
+	cutoff := now.Add(-1 * time.Minute)
+	requests := t.rateLimiter[ip]
+
+	// Filter out old requests
+	valid := requests[:0]
+	for _, ts := range requests {
+		if ts.After(cutoff) {
+			valid = append(valid, ts)
+		}
+	}
+	valid = append(valid, now)
+	t.rateLimiter[ip] = valid
+
+	return len(valid) <= 60
+}
+
+func (t *TransportDNS) cleanupRateLimit() {
+	t.rateMu.Lock()
+	defer t.rateMu.Unlock()
+
+	now := time.Now()
+	cutoff := now.Add(-1 * time.Minute)
+	for ip, requests := range t.rateLimiter {
+		valid := requests[:0]
+		for _, ts := range requests {
+			if ts.After(cutoff) {
+				valid = append(valid, ts)
+			}
+		}
+		if len(valid) == 0 {
+			delete(t.rateLimiter, ip)
+		} else {
+			t.rateLimiter[ip] = valid
 		}
 	}
 }
@@ -979,15 +1125,69 @@ func rc4Crypt(data []byte, keyHex string) []byte {
 	}
 	keyBytes, err := hex.DecodeString(keyHex)
 	if err != nil || len(keyBytes) != 16 {
-		return data
+		return nil
 	}
-	cipher, err := rc4.NewCipher(keyBytes)
+	S := make([]byte, 256)
+	for i := 0; i < 256; i++ {
+		S[i] = byte(i)
+	}
+	j := 0
+	for i := 0; i < 256; i++ {
+		j = (j + int(S[i]) + int(keyBytes[i%len(keyBytes)])) % 256
+		S[i], S[j] = S[j], S[i]
+	}
+	i, j := 0, 0
+	out := make([]byte, len(data))
+	for k := 0; k < len(data); k++ {
+		i = (i + 1) % 256
+		j = (j + int(S[i])) % 256
+		S[i], S[j] = S[j], S[i]
+		out[k] = data[k] ^ S[(int(S[i])+int(S[j]))%256]
+	}
+	return out
+}
+
+func aesCtrEncrypt(data []byte, keyHex string) ([]byte, error) {
+	if len(data) == 0 {
+		return data, nil
+	}
+	keyBytes, err := hex.DecodeString(keyHex)
+	if err != nil || len(keyBytes) != 16 {
+		return nil, fmt.Errorf("invalid key")
+	}
+	iv := make([]byte, 16)
+	if _, err := rand.Read(iv); err != nil {
+		return nil, err
+	}
+	block, err := aes.NewCipher(keyBytes)
 	if err != nil {
-		return data
+		return nil, err
 	}
-	result := make([]byte, len(data))
-	cipher.XORKeyStream(result, data)
-	return result
+	stream := cipher.NewCTR(block, iv)
+	encrypted := make([]byte, len(data))
+	stream.XORKeyStream(encrypted, data)
+	return append(iv, encrypted...), nil
+}
+
+func aesCtrDecrypt(data []byte, keyHex string) ([]byte, error) {
+	if len(data) == 0 {
+		return data, nil
+	}
+	keyBytes, err := hex.DecodeString(keyHex)
+	if err != nil || len(keyBytes) != 16 {
+		return nil, fmt.Errorf("invalid key")
+	}
+	if len(data) < 16 {
+		return nil, fmt.Errorf("data too short for IV")
+	}
+	block, err := aes.NewCipher(keyBytes)
+	if err != nil {
+		return nil, err
+	}
+	stream := cipher.NewCTR(block, data[:16])
+	decrypted := make([]byte, len(data)-16)
+	stream.XORKeyStream(decrypted, data[16:])
+	return decrypted, nil
 }
 
 func parseMetaV1(data []byte) (metaV1, []byte, bool) {

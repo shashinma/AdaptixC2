@@ -19,6 +19,7 @@ type TransportSMB struct {
 type TransportConfig struct {
 	Pipename   string `json:"pipename"`
 	EncryptKey string `json:"encrypt_key"`
+	CryptoType string `json:"crypto_type"`
 	Protocol   string `json:"protocol"`
 }
 

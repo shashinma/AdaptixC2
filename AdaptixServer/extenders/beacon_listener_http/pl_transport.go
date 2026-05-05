@@ -3,8 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
-	"crypto/rc4"
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
@@ -46,6 +47,7 @@ type TransportConfig struct {
 	PortBind           int      `json:"port_bind"`
 	Callback_addresses []string `json:"callback_addresses"`
 	EncryptKey         string   `json:"encrypt_key"`
+	CryptoType         string   `json:"crypto_type"`
 
 	Ssl         bool   `json:"ssl"`
 	SslCert     []byte `json:"ssl_cert"`
@@ -409,20 +411,22 @@ func (t *TransportHTTP) parseBeatAndData(ctx *gin.Context) (string, string, []by
 	}
 
 	agentInfoCrypt, err = base64.StdEncoding.DecodeString(beat)
-	if len(agentInfoCrypt) < 5 || err != nil {
+	if len(agentInfoCrypt) < 16+8 || err != nil {
 		return "", "", nil, nil, errors.New("failed decrypt beat")
 	}
 
 	encKey, err := hex.DecodeString(t.Config.EncryptKey)
-	if err != nil {
+	if err != nil || len(encKey) != 16 {
 		return "", "", nil, nil, errors.New("failed decrypt beat")
 	}
-	rc4crypt, errcrypt := rc4.NewCipher(encKey)
-	if errcrypt != nil {
-		return "", "", nil, nil, errors.New("rc4 decrypt error")
+	if t.Config.CryptoType == "AES" {
+		agentInfo, err = aesCtrDecryptWithIV(agentInfoCrypt, encKey)
+		if err != nil {
+			return "", "", nil, nil, errors.New("aes decrypt error")
+		}
+	} else {
+		agentInfo = rc4Crypt(agentInfoCrypt, encKey)
 	}
-	agentInfo = make([]byte, len(agentInfoCrypt))
-	rc4crypt.XORKeyStream(agentInfo, agentInfoCrypt)
 
 	agentType = uint(binary.BigEndian.Uint32(agentInfo[:4]))
 	agentInfo = agentInfo[4:]
@@ -513,4 +517,42 @@ func (t *TransportHTTP) pageError(ctx *gin.Context) {
 	ctx.Writer.WriteHeader(http.StatusNotFound)
 	html := []byte(t.Config.WebPageError)
 	_, _ = ctx.Writer.Write(html)
+}
+
+func aesCtrDecryptWithIV(data []byte, key []byte) ([]byte, error) {
+	if len(data) < 16 {
+		return nil, errors.New("data too short for IV")
+	}
+	if len(key) != 16 {
+		return nil, errors.New("invalid key size for AES-128")
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	stream := cipher.NewCTR(block, data[:16])
+	decrypted := make([]byte, len(data)-16)
+	stream.XORKeyStream(decrypted, data[16:])
+	return decrypted, nil
+}
+
+func rc4Crypt(data []byte, key []byte) []byte {
+	S := make([]byte, 256)
+	for i := 0; i < 256; i++ {
+		S[i] = byte(i)
+	}
+	j := 0
+	for i := 0; i < 256; i++ {
+		j = (j + int(S[i]) + int(key[i%len(key)])) % 256
+		S[i], S[j] = S[j], S[i]
+	}
+	i, j := 0, 0
+	out := make([]byte, len(data))
+	for k := 0; k < len(data); k++ {
+		i = (i + 1) % 256
+		j = (j + int(S[i])) % 256
+		S[i], S[j] = S[j], S[i]
+		out[k] = data[k] ^ S[(int(S[i])+int(S[j]))%256]
+	}
+	return out
 }
