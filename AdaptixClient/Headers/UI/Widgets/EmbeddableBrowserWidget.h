@@ -7,6 +7,9 @@
 #include <QWebEngineView>
 #include <QWebEnginePage>
 #include <QWebEngineProfile>
+#include <QWebEngineDownloadRequest>
+#include <QWebEnginePermission>
+#include <QWebEngineLoadingInfo>
 #include <QTabBar>
 #include <QStackedWidget>
 #include <QToolButton>
@@ -202,6 +205,10 @@ private Q_SLOTS:
     void onBrowserTabMoved(int from, int to);
     void onNewTab();
     void onPageTitleChanged(const QString& title);
+    void onPermissionRequested(const QWebEnginePermission& permission);
+    void onRenderProcessTerminated(QWebEnginePage::RenderProcessTerminationStatus status, int exitCode);
+    void onDownloadRequested(QWebEngineDownloadRequest* download);
+    void onLoadingChanged(const QWebEngineLoadingInfo& info);
 };
 
 #endif

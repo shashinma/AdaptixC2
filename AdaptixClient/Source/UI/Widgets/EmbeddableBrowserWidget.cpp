@@ -22,6 +22,8 @@
 
 #include <QWebEngineView>
 #include <QWebEnginePage>
+#include <QWebEngineSettings>
+#include <QWebEngineLoadingInfo>
 #include <QWebEngineHistory>
 #include <QResizeEvent>
 #include <QTimer>
@@ -384,10 +386,16 @@ EmbeddableBrowserWidget::EmbeddableBrowserWidget(AdaptixWidget* w, const Embedda
 
 void EmbeddableBrowserWidget::createChromelessUI()
 {
-    const QString profileId = QStringLiteral("chromeless_%1").arg(m_logicalId);
+    const QString profileId = QStringLiteral("chromeless_%1").arg(sanitizeBrowserLogicalId(m_logicalId));
     browserSharedProfile = new QWebEngineProfile(profileId, this);
+    m_ownsProfile = true;
+    browserSharedProfile->setPersistentCookiesPolicy(QWebEngineProfile::NoPersistentCookies);
+    browserSharedProfile->setHttpCacheType(QWebEngineProfile::MemoryHttpCache);
+    connect(browserSharedProfile, &QWebEngineProfile::downloadRequested,
+            this, &EmbeddableBrowserWidget::onDownloadRequested);
     webView = new QWebEngineView(this);
     auto* page = new QWebEnginePage(browserSharedProfile, webView);
+    page->settings()->setAttribute(QWebEngineSettings::LocalStorageEnabled, false);
     webView->setPage(page);
     webView->setContextMenuPolicy(Qt::DefaultContextMenu);
 
@@ -429,6 +437,13 @@ BrowserPage::BrowserPage(QWebEngineProfile* profile, QWebEngineView* view,
     , m_devToolsPage(devToolsPage)
     , m_browserWidget(browserWidget)
 {
+    Q_UNUSED(parent)
+    if (m_browserWidget) {
+        connect(this, &QWebEnginePage::permissionRequested,
+                m_browserWidget, &EmbeddableBrowserWidget::onPermissionRequested);
+        connect(this, &QWebEnginePage::renderProcessTerminated,
+                m_browserWidget, &EmbeddableBrowserWidget::onRenderProcessTerminated);
+    }
 }
 
 QWebEnginePage* BrowserPage::createWindow(QWebEnginePage::WebWindowType type)
@@ -836,8 +851,15 @@ void EmbeddableBrowserWidget::createFullUI()
     browserTabStack->addWidget(firstTabPage);
     browserTabBar->addTab(tr("New tab"));
 
-    webView->setPage(new BrowserPage(webView->page()->profile(), webView, devToolsView->page(), this, webView));
+    {
+        QWebEnginePage* oldPage = webView->page();
+        auto* newPage = new BrowserPage(oldPage->profile(), webView, devToolsView->page(), this, webView);
+        webView->setPage(newPage);
+        delete oldPage;
+    }
     browserSharedProfile = webView->page()->profile();
+    connect(browserSharedProfile, &QWebEngineProfile::downloadRequested,
+            this, &EmbeddableBrowserWidget::onDownloadRequested);
     connectViewSignals(webView);
 
     verticalSplitter = new QSplitter(Qt::Vertical, this);

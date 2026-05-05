@@ -1020,7 +1020,11 @@ void BridgeApp::open_remote_shell(const QString &id) { scriptEngine->manager()->
 void BridgeApp::open_embedded_browser(const QString &url, const QString &proxyHost, int proxyPort)
 {
 #ifdef HAS_QT_WEBENGINE
-    scriptEngine->manager()->GetAdaptix()->LoadBrowserUI(url, proxyHost, static_cast<quint16>(proxyPort));
+    AdaptixWidget* ax = scriptEngine->manager()->GetAdaptix();
+    if (!ax)
+        return;
+    const quint16 safeProxyPort = (proxyPort >= 0 && proxyPort <= 65535) ? static_cast<quint16>(proxyPort) : 0;
+    ax->LoadBrowserUI(url, proxyHost, safeProxyPort);
 #else
     Q_UNUSED(url);
     Q_UNUSED(proxyHost);
@@ -1035,15 +1039,16 @@ void BridgeApp::open_web_panel(bool chromeless, const QString& panelId, const QS
     AdaptixWidget* ax = scriptEngine->manager()->GetAdaptix();
     if (!ax)
         return;
+    const quint16 safeProxyPort = (proxyPort >= 0 && proxyPort <= 65535) ? static_cast<quint16>(proxyPort) : 0;
     if (!chromeless) {
-        ax->LoadBrowserUI(url, proxyHost, static_cast<quint16>(proxyPort));
+        ax->LoadBrowserUI(url, proxyHost, safeProxyPort);
         return;
     }
     if (panelId.trimmed().isEmpty()) {
         log_error(QStringLiteral("open_web_panel: chromeless mode requires a non-empty panelId"));
         return;
     }
-    ax->LoadChromelessWebPanel(panelId.trimmed(), title, url, proxyHost, static_cast<quint16>(proxyPort), icon);
+    ax->LoadChromelessWebPanel(panelId.trimmed(), title, url, proxyHost, safeProxyPort, icon);
 #else
     Q_UNUSED(chromeless);
     Q_UNUSED(panelId);
