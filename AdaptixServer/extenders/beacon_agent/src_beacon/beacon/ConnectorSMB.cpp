@@ -221,10 +221,15 @@ void ConnectorSMB::Disconnect()
 void ConnectorSMB::Exchange(BYTE* plainData, ULONG plainSize, BYTE* sessionKey)
 {
     this->recvSize = 0;
+    int cryptoType = GetCurrentCryptoType();
 
     if (plainData && plainSize > 0) {
-        EncryptRC4(plainData, plainSize, sessionKey, 16);
-        this->SendData(plainData, plainSize);
+        BYTE* encBuf = NULL;
+        ULONG encLen = 0;
+        if (CryptoEncryptAlloc(plainData, plainSize, sessionKey, 16, cryptoType, &encBuf, &encLen)) {
+            this->SendData(encBuf, encLen);
+            MemFreeLocal((LPVOID*)&encBuf, encLen);
+        }
     }
 
     if (!this->rdPending)
@@ -253,8 +258,17 @@ void ConnectorSMB::Exchange(BYTE* plainData, ULONG plainSize, BYTE* sessionKey)
         return;
     }
 
-    if (this->recvSize > 0 && this->recvData)
-        DecryptRC4(this->recvData, this->recvSize, sessionKey, 16);
+    ULONG minSize = (cryptoType == CRYPTO_AES) ? 17 : 1;
+    if (this->recvSize >= (int)minSize && this->recvData) {
+        BYTE* plainPtr = NULL;
+        ULONG plainLen = 0;
+        if (CryptoDecryptInPlace(this->recvData, this->recvSize, sessionKey, 16, cryptoType, &plainPtr, &plainLen)) {
+            if (cryptoType == CRYPTO_AES) {
+                memmove(this->recvData, plainPtr, plainLen);
+            }
+            this->recvSize = plainLen;
+        }
+    }
 }
 
 void ConnectorSMB::DisconnectInternal() 

