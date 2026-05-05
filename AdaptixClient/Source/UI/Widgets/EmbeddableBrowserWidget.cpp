@@ -75,6 +75,8 @@ private:
 
 namespace {
 
+QMutex s_bookmarksMutex;
+
 QString resourcePngAsDataUri(const QString& qrcPath)
 {
     QFile f(qrcPath);
@@ -447,6 +449,10 @@ bool BrowserPage::acceptNavigationRequest(const QUrl& url, QWebEnginePage::Navig
         return QWebEnginePage::acceptNavigationRequest(url, type, isMainFrame);
 
     const QString host = url.host();
+    if (host.compare(QStringLiteral("home"), Qt::CaseInsensitive) == 0) {
+        // Allow navigation to the internal home page itself
+        return QWebEnginePage::acceptNavigationRequest(url, type, isMainFrame);
+    }
     if (host.compare(QStringLiteral("add"), Qt::CaseInsensitive) == 0) {
         if (m_browserWidget)
             QMetaObject::invokeMethod(m_browserWidget, "promptAddBookmarkFromHome", Qt::QueuedConnection);
@@ -467,7 +473,8 @@ bool BrowserPage::acceptNavigationRequest(const QUrl& url, QWebEnginePage::Navig
         return false;
     }
 
-    return QWebEnginePage::acceptNavigationRequest(url, type, isMainFrame);
+    // Block any other adaptix-browser:// URLs for security
+    return false;
 }
 
 void EmbeddableBrowserWidget::createFullUI()
@@ -894,13 +901,24 @@ void EmbeddableBrowserWidget::connectViewSignals(QWebEngineView* view)
     connect(view, &QWebEngineView::loadStarted, this, &EmbeddableBrowserWidget::onLoadStarted);
     connect(view, &QWebEngineView::loadFinished, this, &EmbeddableBrowserWidget::onLoadFinished);
     connect(view, &QWebEngineView::titleChanged, this, &EmbeddableBrowserWidget::onPageTitleChanged);
+    if (QWebEnginePage* page = view->page()) {
+        connect(page, &QWebEnginePage::loadingChanged,
+                this, &EmbeddableBrowserWidget::onLoadingChanged);
+    }
 }
 
 void EmbeddableBrowserWidget::disconnectViewSignals(QWebEngineView* view)
 {
     if (!view)
         return;
-    disconnect(view, nullptr, this, nullptr);
+    disconnect(view, &QWebEngineView::urlChanged, this, &EmbeddableBrowserWidget::onUrlChanged);
+    disconnect(view, &QWebEngineView::loadStarted, this, &EmbeddableBrowserWidget::onLoadStarted);
+    disconnect(view, &QWebEngineView::loadFinished, this, &EmbeddableBrowserWidget::onLoadFinished);
+    disconnect(view, &QWebEngineView::titleChanged, this, &EmbeddableBrowserWidget::onPageTitleChanged);
+    if (QWebEnginePage* page = view->page()) {
+        disconnect(page, &QWebEnginePage::loadingChanged,
+                   this, &EmbeddableBrowserWidget::onLoadingChanged);
+    }
 }
 
 void EmbeddableBrowserWidget::updateTabTitleForView(QWebEngineView* view)
@@ -1175,9 +1193,12 @@ void EmbeddableBrowserWidget::onUrlChanged(const QUrl& url)
         const QString barText = isInternalHomeUrl(url) ? QStringLiteral("adaptix:home") : url.toString();
         if (barText != urlBar->text()) {
             urlBar->setText(barText);
-            QTimer::singleShot(0, urlBar, [this]() {
-                urlBar->setCursorPosition(0);
-                urlBar->deselect();
+            QPointer<oclero::qlementine::LineEdit> safeUrlBar = urlBar;
+            QTimer::singleShot(0, urlBar, [safeUrlBar]() {
+                if (safeUrlBar) {
+                    safeUrlBar->setCursorPosition(0);
+                    safeUrlBar->deselect();
+                }
             });
         }
         updateNavigationActions();
@@ -1188,6 +1209,9 @@ void EmbeddableBrowserWidget::onUrlChanged(const QUrl& url)
 void EmbeddableBrowserWidget::onLoadStarted()
 {
     if (!reloadButton)
+        return;
+    auto* v = qobject_cast<QWebEngineView*>(sender());
+    if (!v || v != currentWebView())
         return;
     reloadButton->setEnabled(false);
 }
@@ -1370,7 +1394,10 @@ void EmbeddableBrowserWidget::onProxyTunnelPicked(int index)
 
 void EmbeddableBrowserWidget::loadBookmarks()
 {
+    if (!bookmarksList)
+        return;
     bookmarksList->clear();
+    QMutexLocker locker(&s_bookmarksMutex);
     QSettings settings("Adaptix", "Browser");
     int size = settings.beginReadArray("bookmarks");
     for (int i = 0; i < size; ++i) {
@@ -1465,27 +1492,34 @@ void EmbeddableBrowserWidget::trimBookmarksToFit()
     if (!layout || layout->count() == 0)
         return;
     bookmarksButtonsContainer->adjustSize();
-    while (bookmarksButtonsContainer->sizeHint().width() > viewportW && layout->count() > 1) {
+    while (bookmarksButtonsContainer->sizeHint().width() > viewportW && layout->count() > 0) {
+        // Expected pattern: [button][separator][button][separator]...[stretch]
+        // Remove last stretch first
         QLayoutItem* item = layout->takeAt(layout->count() - 1);
         if (item) {
-            if (item->spacerItem())
+            if (item->spacerItem()) {
                 delete item;
-            else {
-                if (item->widget())
-                    item->widget()->deleteLater();
+            } else if (item->widget()) {
+                item->widget()->deleteLater();
+                delete item;
+            } else {
                 delete item;
             }
         }
+        if (layout->count() == 0)
+            break;
+        // Remove separator
         item = layout->takeAt(layout->count() - 1);
         if (item && item->widget())
             item->widget()->deleteLater();
         delete item;
-        if (layout->count() > 0) {
-            item = layout->takeAt(layout->count() - 1);
-            if (item && item->widget())
-                item->widget()->deleteLater();
-            delete item;
-        }
+        if (layout->count() == 0)
+            break;
+        // Remove button
+        item = layout->takeAt(layout->count() - 1);
+        if (item && item->widget())
+            item->widget()->deleteLater();
+        delete item;
         bookmarksButtonsContainer->adjustSize();
     }
     layout->addStretch();
@@ -1528,7 +1562,7 @@ void EmbeddableBrowserWidget::onBackLongPressTimeout()
 {
     if (!(QApplication::mouseButtons() & Qt::LeftButton))
         return;
-    if (!backButton->underMouse())
+    if (!backButton || !backButton->underMouse())
         return;
     QWebEnginePage* page = currentWebView() ? currentWebView()->page() : nullptr;
     if (!page)
@@ -1558,6 +1592,9 @@ void EmbeddableBrowserWidget::onBackLongPressTimeout()
 
 void EmbeddableBrowserWidget::saveBookmarks()
 {
+    if (!bookmarksList)
+        return;
+    QMutexLocker locker(&s_bookmarksMutex);
     QSettings settings("Adaptix", "Browser");
     settings.beginWriteArray("bookmarks");
     for (int i = 0; i < bookmarksList->count(); ++i) {
@@ -1671,7 +1708,8 @@ void EmbeddableBrowserWidget::handleHomeBookmarkDelete(int row)
 
 bool EmbeddableBrowserWidget::isInternalHomeUrl(const QUrl& url) const
 {
-    return url.scheme() == QStringLiteral("adaptix-browser");
+    return url.scheme() == QStringLiteral("adaptix-browser")
+        && url.host().compare(QStringLiteral("home"), Qt::CaseInsensitive) == 0;
 }
 
 void EmbeddableBrowserWidget::loadHomePage()
